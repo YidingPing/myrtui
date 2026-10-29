@@ -3,6 +3,9 @@
 Thanks for taking a look. This is a small, opinionated project; the notes below
 are what you need to run it, test it, and not fight its conventions.
 
+**If you are an AI agent, read [AGENTS.md](AGENTS.md) first** — it is the
+short form of everything below, plus the hard rules.
+
 ## Language policy
 
 - **Code comments and docstrings are in Chinese** by project convention. This
@@ -42,6 +45,17 @@ python -m pytest tests/test_v22.py -q     # a single area
 - `tests/README.md` documents the fragile spots (shell-readiness races, stdout
   capture inside Textual, etc.) — read the relevant section before debugging a
   flaky case.
+
+## Documentation boundaries
+
+`docs/` is public and ships inside the PyPI sdist. It may contain only the
+files listed in `docs/README.md`; `tests/test_docs_policy.py` enforces that
+list, forbids private network addresses and blocks internal document names
+(`*-PLAN.md`, `*-ACCEPTANCE.md`, …) anywhere in the tree.
+
+Design plans, acceptance records and release playbooks live in the maintainer's
+private repository (`myrtui-internal`) and are deliberately not published. If
+you need that context, open an issue — do not add such files here.
 
 ## Style
 

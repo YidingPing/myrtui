@@ -16,8 +16,8 @@
 #      回退并打印手动命令，不影响 myrtui 本体）。
 #
 # v0.4.4 起安装源改为 PyPI：旧版的 Gitea Release API 查询、wheel 资产下载、
-# token / git 凭据复用、版本比对全部删除。副作用（都是想要的）：
-#   - 不再需要 MYRTUI_RELEASE_BASE / MYRTUI_RELEASE_REPO / MYRTUI_TOKEN；
+# 访问令牌 / git 凭据复用、版本比对全部删除。副作用（都是想要的）：
+#   - 不再需要任何仓库地址或访问令牌类环境变量；
 #   - 「已是最新」由 pipx / uv 自己判断，脚本不再提前退出；
 #   - 装/升级走同一条命令：重跑本脚本即可。
 #

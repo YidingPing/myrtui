@@ -666,7 +666,7 @@ def test_click_timing_sends_single_combined_sequence(copied, app_root):
 def test_ssh_copy_only_osc52(monkeypatch, app_root):
     """SSH 会话复制：只发 OSC 52，不调用系统命令，提示不甩锅给用户。"""
 
-    monkeypatch.setenv("SSH_CONNECTION", "10.0.0.1 1234 22")
+    monkeypatch.setenv("SSH_CONNECTION", "192.0.2.10 1234 22")  # TEST-NET-1，避免私网地址
     called: list[str] = []
     monkeypatch.setattr(
         clipboard,

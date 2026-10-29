@@ -45,6 +45,24 @@ def _show(backend: TmuxBackend, option: str) -> str:
     return proc.stdout.split(None, 1)[1].strip()
 
 
+def _exit_pane(backend: TmuxBackend, pane_id: str, timeout: float = 10.0) -> None:
+    """把 ``exit`` 送进 pane 直到它真的死亡。
+
+    ``create_session`` 之后 shell 可能还没开始读输入，第一发 ``send_text``
+    会被 tmux 丢掉（tests/README「并行下已知的易碎点」）。所以**重发**而不是
+    加大 sleep：每 0.5s 一发，直到 ``pane.dead``。
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        backend.send_text(pane_id, "exit")
+        backend.send_keys(pane_id, "Enter")
+        for _ in range(5):
+            time.sleep(0.1)
+            if any(p.pane_id == pane_id and p.dead for p in backend.list_panes()):
+                return
+    raise AssertionError(f"pane {pane_id} 在 {timeout:.0f}s 内没有退出（shell 没收到 exit）")
+
+
 def _wait_dead(backend: TmuxBackend, pane_id: str, timeout: float = 10.0) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -239,10 +257,14 @@ def test_app_dead_hint_and_ctrl_a_r_respawn(backend, app_root):
         async with app.run_test(size=(100, 30)) as pilot:
             await pilot.pause(0.6)
             pid = app._pane_ids[0]
-            backend.send_text(pid, "exit")
-            backend.send_keys(pid, "Enter")
+            _exit_pane(backend, pid)
             _wait_dead(backend, pid)
-            await pilot.pause(0.6)
+            # App 的抓屏是轮询的：等它把 dead 状态落到 _dead 上（最多 3s），
+            # 不赌单次 pause 的长度（慢机器上 0.6s 不够）。
+            for _ in range(30):
+                if app._dead.get(pid) is True:
+                    break
+                await pilot.pause(0.1)
             assert app._dead.get(pid) is True
             topbar = app.query_one(TopBar)
             assert topbar.query_one("#tab-0", PaneTab)._body.strip() == "1:dead"

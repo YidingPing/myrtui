@@ -56,5 +56,10 @@ jobs:
           python -m pip install -U pip
           python -m pip install -e ".[dev]"
 
+      - name: Docs policy
+        # 公开仓的文档边界（docs/ 白名单、无私网地址、无内部文档、sdist 白名单）
+        # 见 tests/test_docs_policy.py 与 AGENTS.md；单独一步让失败原因一眼可见。
+        run: python -m pytest tests/test_docs_policy.py -q
+
       - name: Test
         run: python -m pytest -n 2

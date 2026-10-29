@@ -113,6 +113,24 @@ def test_char_index_at_cell_wide_char():
 
 # ---------- 后端：隔离实例集成 ----------
 
+def _exit_pane(backend: TmuxBackend, pane_id: str, timeout: float = 10.0) -> None:
+    """把 ``exit`` 送进 pane 直到它真的死亡。
+
+    ``create_session`` 之后 shell 可能还没开始读输入，第一发 ``send_text``
+    会被 tmux 丢掉（tests/README「并行下已知的易碎点」）。所以**重发**而不是
+    加大 sleep：每 0.5s 一发，直到 ``pane.dead``。
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        backend.send_text(pane_id, "exit")
+        backend.send_keys(pane_id, "Enter")
+        for _ in range(5):
+            time.sleep(0.1)
+            if any(p.pane_id == pane_id and p.dead for p in backend.list_panes()):
+                return
+    raise AssertionError(f"pane {pane_id} 在 {timeout:.0f}s 内没有退出（shell 没收到 exit）")
+
+
 @pytest.fixture
 def backend():
     name = f"myrtui-test-{uuid.uuid4().hex[:8]}"
@@ -198,12 +216,7 @@ def test_resize_window(backend):
 def test_dead_pane_capture_and_respawn(backend):
     """remain-on-exit：shell 退出后 pane 保留、capture 可用、可 respawn。"""
     pid = backend.list_panes()[0].pane_id
-    backend.send_text(pid, "exit")
-    backend.send_keys(pid, "Enter")
-    for _ in range(20):
-        time.sleep(0.3)
-        if backend.list_panes()[0].dead:
-            break
+    _exit_pane(backend, pid)
     assert backend.list_panes()[0].dead
     _, caps = backend.poll({pid: (0, 0)})
     assert len(caps[pid].text.splitlines()) == backend.list_panes()[0].height
