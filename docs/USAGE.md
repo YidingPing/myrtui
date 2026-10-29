@@ -1,5 +1,7 @@
 # Usage manual
 
+[English](USAGE.md) | [简体中文](USAGE.zh-CN.md)
+
 Complete reference for myrtui. The [README](../README.md) is the short version.
 
 - [Install and upgrade](#install-and-upgrade)

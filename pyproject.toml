@@ -79,6 +79,7 @@ include = [
     "/tests",
     "/scripts",
     "/docs/USAGE.md",
+    "/docs/USAGE.zh-CN.md",
     "/docs/ARCHITECTURE.md",
 ]
 

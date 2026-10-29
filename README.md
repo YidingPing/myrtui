@@ -130,7 +130,8 @@ the full cheat sheet. Full tables: [docs/USAGE.md](docs/USAGE.md#key-bindings).
 ## Docs & contributing
 
 - [docs/USAGE.md](docs/USAGE.md) — the full manual (keys, previews, splitters,
-  instance management, all environment variables).
+  instance management, all environment variables). Also available in
+  [Chinese](docs/USAGE.zh-CN.md).
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — module map and design decisions.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — how to run tests, plus the language policy.
 
