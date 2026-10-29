@@ -48,6 +48,8 @@ graphics = [
 dev = [
     "pytest>=8",
     "pytest-xdist>=3",
+    # tests/test_docs_policy.py 要读 pyproject；3.10 没有标准库 tomllib。
+    "tomli>=2; python_version < '3.11'",
 ]
 
 [project.scripts]

@@ -15,8 +15,12 @@ from __future__ import annotations
 
 import re
 import subprocess
-import tomllib
 from pathlib import Path
+
+try:  # Python >= 3.11
+    import tomllib
+except ModuleNotFoundError:  # 3.10：dev extra 里的 tomli（见 pyproject）
+    import tomli as tomllib
 
 import pytest
 
