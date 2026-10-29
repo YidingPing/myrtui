@@ -1,0 +1,90 @@
+[project]
+name = "myrtui"
+version = "0.4.4"
+description = "Lightweight per-project terminal workspace: file tree + git log + up to 4 real tmux panes, in Textual"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Yiding Ping" }]
+keywords = ["tui", "terminal", "tmux", "textual", "multiplexer", "workspace"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Terminals :: Terminal Emulators/X Terminals",
+    "Topic :: Software Development :: User Interfaces",
+]
+dependencies = [
+    "textual>=8,<9",
+    "platformdirs",
+    # v0.36：Markdown 预览的 dollar-math 解析（dollarmath）。纯 Python。
+    "mdit-py-plugins>=0.4",
+    # v0.3.1：终端位图（Sixel / Kitty TGP）改为**条件硬依赖**。textual-image
+    # 要求 Python ≥3.12，marker 让 3.10/3.11 自动跳过（只有 termtex Unicode 回落）。
+    # 起因：装进 [graphics] extra 时，pipx / uv / venv 装 wheel 都不带 extra，
+    # 正式版永远没有位图，`V` 还会误报「终端没有图像协议」。
+    "textual-image>=0.14,<0.16; python_version >= '3.12'",
+    "pillow>=10.3; python_version >= '3.12'",
+]
+
+[project.optional-dependencies]
+# 兼容旧文档 / 旧脚本的 `.[graphics]`：依赖已在主 dependencies 里按解释器
+# 版本条件声明，这里保留同名 extra（内容相同，pip 会去重）。
+graphics = [
+    "textual-image>=0.14,<0.16",
+    "pillow>=10.3",
+]
+# 测试依赖（CI 装 `-e ".[dev]"`；本地 `pip install -e ".[dev]"`）。
+# pytest-xdist：用例天然隔离（tmux socket 名带 uuid、项目根走 tmp_path），
+# 可安全并行——全量串行 ~5min → `-n 4` ~1min。
+dev = [
+    "pytest>=8",
+    "pytest-xdist>=3",
+]
+
+[project.scripts]
+myrtui = "myrtui.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/YidingPing/myrtui"
+Repository = "https://github.com/YidingPing/myrtui"
+Issues = "https://github.com/YidingPing/myrtui/issues"
+Changelog = "https://github.com/YidingPing/myrtui/releases"
+Documentation = "https://github.com/YidingPing/myrtui/blob/main/docs/USAGE.md"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+# 白名单：**内部中文设计文档不进 sdist**。
+# PyPI 上的 sdist 是公开产物——即使仓库是私有的，sdist 一样人人可下，
+# 而 docs/ 里的 PLAN/ACCEPTANCE/RELEASE 含内网地址与发布细节。
+# 所以这里用白名单而不是黑名单：新增一个 docs 文件不会自动泄漏。
+include = [
+    "/LICENSE",
+    "/README.md",
+    "/README.zh-CN.md",
+    "/CONTRIBUTING.md",
+    "/pyproject.toml",
+    "/myrtui",
+    "/tests",
+    "/scripts",
+    "/docs/USAGE.md",
+    "/docs/ARCHITECTURE.md",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["myrtui"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
