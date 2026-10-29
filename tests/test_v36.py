@@ -536,6 +536,26 @@ async def _wait_until(pilot, predicate, timeout: float = 3.0, step: float = 0.05
     return predicate()
 
 
+async def _scroll_preview(pilot, scroll, target: int = 30, timeout: float = 6.0) -> int:
+    """把预览滚到 ``target``，返回**实际**落点。
+
+    ``scroll_to`` 在内容尚未布局完（``max_scroll_y == 0``）时会被 clamp 到 0，
+    而且不会自己恢复——所以必须**每轮重新下发**，只观察是不行的（CI py3.10/
+    3.11/3.12 实测：0.6s 时布局常常还没完成）。到不了 target（内容比预期短）
+    就退到能滚的最远处，用实际值作为期望——用例关心的是「重载前后一致」。
+    """
+    waited = 0.0
+    while waited < timeout:
+        scroll.scroll_to(y=target, animate=False)
+        await pilot.pause(0.05)
+        if int(scroll.scroll_y) == target:
+            return target
+        waited += 0.05
+    scroll.scroll_end(animate=False)
+    await pilot.pause(0.05)
+    return int(scroll.scroll_y)
+
+
 def test_reload_keeps_scroll_position(tmp_path):
     app = _app(tmp_path)
     long = tmp_path / "long.md"
@@ -551,13 +571,11 @@ def test_reload_keeps_scroll_position(tmp_path):
             await pilot.pause(0.6)
             screen = app.screen
             scroll = screen.query_one("#mdpreview-scroll")
-            scroll.scroll_to(y=30, animate=False)
-            assert await _wait_until(pilot, lambda: int(scroll.scroll_y) == 30), (
-                "滚动没有生效——布局未完成时 scroll_to 会被 clamp 到 0"
-            )
+            expected = await _scroll_preview(pilot, scroll)
+            assert expected > 0, "预览内容不可滚动——渲染或布局有问题"
 
             # 改盘上内容：重载后正文里必须出现这一行，用来区分「重载前」与「重载后」
-            # （否则 scroll_y 一直是 30，断言可能直接通过而没真的验证恢复逻辑）。
+            # （否则 scroll_y 一直是同一个值，断言可能直接通过而没真的验证恢复逻辑）。
             long.write_text(
                 long.read_text(encoding="utf-8") + "\n## RELOAD-MARK\n",
                 encoding="utf-8",
@@ -568,8 +586,8 @@ def test_reload_keeps_scroll_position(tmp_path):
                 pilot, lambda: "RELOAD-MARK" in screen._text, timeout=5.0
             ), "重载没有读到新内容"
             assert await _wait_until(
-                pilot, lambda: int(scroll.scroll_y) == 30, timeout=5.0
-            ), f"重载后滚动位置丢失：{scroll.scroll_y}"
+                pilot, lambda: int(scroll.scroll_y) == expected, timeout=5.0
+            ), f"重载后滚动位置丢失：期望 {expected}，实际 {scroll.scroll_y}"
             assert isinstance(app.screen, MarkdownPreviewScreen)
 
     asyncio.run(scenario())

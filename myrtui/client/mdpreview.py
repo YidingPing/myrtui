@@ -643,8 +643,9 @@ class MarkdownPreviewScreen(ModalScreen[None], inherit_bindings=False):
 
     # 恢复滚动位置：内容布局要等 Markdown 的行渲染完成，慢机器 / xdist 下
     # ``call_after_refresh`` 可能早于 layout（scroll_y 被 clamp 回 0 且不再回来）。
-    # 200 段文档在 CI py3.12 上实测偶发（run 40884079086），故加有界重试。
-    RESTORE_ATTEMPTS = 20
+    # 200 段文档在 CI py3.12 上实测偶发（run 40884079086），故加有界重试：
+    # 每 50ms 重发一次，最多 3s——布局一就绪就停，对用户无感。
+    RESTORE_ATTEMPTS = 60
     RESTORE_RETRY = 0.05
 
     def _restore_after_reload(self) -> None:
