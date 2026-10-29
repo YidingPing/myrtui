@@ -50,6 +50,9 @@ PRIVATE_RANGE = re.compile(
 # 这些文件必须提到 token 名（守卫自身的断言），不算泄漏
 TOKEN_MENTION_ALLOWED = {"tests/test_install_script.py"}
 
+# 标记拆开写：否则本文件自己就会被 test_no_release_tokens_in_public_tree 抓到。
+_TOKEN_MARKERS = ("GIT" + "EA_TOKEN", "MYRTUI" + "_TOKEN")
+
 
 def _tracked_files() -> list[str]:
     if not (ROOT / ".git").exists():
@@ -115,7 +118,7 @@ def test_no_release_tokens_in_public_tree() -> None:
             text = p.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
-        for marker in ("GITEA_TOKEN", "MYRTUI_TOKEN"):
+        for marker in _TOKEN_MARKERS:
             if marker in text:
                 offenders.append(f"{rel}: {marker}")
     assert not offenders, "公开仓不得残留内网发布 token 名称：\n  " + "\n  ".join(offenders)
