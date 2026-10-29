@@ -641,15 +641,37 @@ class MarkdownPreviewScreen(ModalScreen[None], inherit_bindings=False):
         self._notice_timer = None
         self._set_footer(FOOTER)
 
+    # 恢复滚动位置：内容布局要等 Markdown 的行渲染完成，慢机器 / xdist 下
+    # ``call_after_refresh`` 可能早于 layout（scroll_y 被 clamp 回 0 且不再回来）。
+    # 200 段文档在 CI py3.12 上实测偶发（run 40884079086），故加有界重试。
+    RESTORE_ATTEMPTS = 20
+    RESTORE_RETRY = 0.05
+
     def _restore_after_reload(self) -> None:
         restore = self._restore_scroll
         self._restore_scroll = None
         if not restore:
             return
-        scroll = self.query_one("#mdpreview-scroll", VerticalScroll)
-        self.call_after_refresh(
-            lambda: scroll.scroll_to(y=restore, animate=False)
-        )
+        self._apply_scroll_restore(restore, self.RESTORE_ATTEMPTS)
+
+    def _apply_scroll_restore(self, restore: int, attempts: int) -> None:
+        """贴回 ``restore``；布局还没好就隔一拍再试（最多 ``attempts`` 次）。"""
+
+        def apply() -> None:
+            if not self._alive():
+                return
+            try:
+                scroll = self.query_one("#mdpreview-scroll", VerticalScroll)
+            except Exception:  # noqa: BLE001 —— 卸载竞态
+                return
+            scroll.scroll_to(y=restore, animate=False)
+            if int(scroll.scroll_y) != restore and attempts > 0:
+                self.set_timer(
+                    self.RESTORE_RETRY,
+                    lambda: self._apply_scroll_restore(restore, attempts - 1),
+                )
+
+        self.call_after_refresh(apply)
 
     # ---------- 动作 ----------
 

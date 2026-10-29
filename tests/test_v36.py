@@ -521,6 +521,21 @@ def test_math_block_falls_back_to_latex_without_cache(tmp_path):
     asyncio.run(scenario())
 
 
+async def _wait_until(pilot, predicate, timeout: float = 3.0, step: float = 0.05) -> bool:
+    """轮询直到 ``predicate()`` 为真。
+
+    预览的渲染走 worker，布局完成时机在慢机器 / xdist 上差别很大；固定
+    ``pause(0.6)`` 属于赌博（CI py3.12 实测偶发），改用**条件等待**。
+    """
+    waited = 0.0
+    while waited < timeout:
+        if predicate():
+            return True
+        await pilot.pause(step)
+        waited += step
+    return predicate()
+
+
 def test_reload_keeps_scroll_position(tmp_path):
     app = _app(tmp_path)
     long = tmp_path / "long.md"
@@ -537,11 +552,25 @@ def test_reload_keeps_scroll_position(tmp_path):
             screen = app.screen
             scroll = screen.query_one("#mdpreview-scroll")
             scroll.scroll_to(y=30, animate=False)
-            await pilot.pause(0.1)
+            assert await _wait_until(pilot, lambda: int(scroll.scroll_y) == 30), (
+                "滚动没有生效——布局未完成时 scroll_to 会被 clamp 到 0"
+            )
+
+            # 改盘上内容：重载后正文里必须出现这一行，用来区分「重载前」与「重载后」
+            # （否则 scroll_y 一直是 30，断言可能直接通过而没真的验证恢复逻辑）。
+            long.write_text(
+                long.read_text(encoding="utf-8") + "\n## RELOAD-MARK\n",
+                encoding="utf-8",
+            )
             await pilot.press("r")
-            await pilot.pause(0.6)
+
+            assert await _wait_until(
+                pilot, lambda: "RELOAD-MARK" in screen._text, timeout=5.0
+            ), "重载没有读到新内容"
+            assert await _wait_until(
+                pilot, lambda: int(scroll.scroll_y) == 30, timeout=5.0
+            ), f"重载后滚动位置丢失：{scroll.scroll_y}"
             assert isinstance(app.screen, MarkdownPreviewScreen)
-            assert int(scroll.scroll_y) == 30
 
     asyncio.run(scenario())
 
