@@ -15,10 +15,13 @@
 #   1. PyPI → Your projects → Publishing → 添加 Trusted Publisher：
 #      owner / repo / workflow 名必须是 `release.yml`、environment 填 `pypi`；
 #   2. GitHub 仓库 → Settings → Environments → 新建 `pypi`；
-#   3. 首次发布建议先手动跑到 TestPyPI 验证：把 publish-pypi 的
-#      `repository-url: https://test.pypi.org/legacy/` 打开（并配套配置
-#      TestPyPI 的 Trusted Publisher），装 `pipx install --index-url
-#      https://test.pypi.org/simple/ myrtui` 确认可装，再关掉。
+#   3. TestPyPI 演练：另需一条**独立**的 TestPyPI Trusted Publisher（字段同上，
+#      TestPyPI 是独立账号体系）。演练不靠改文件，而是靠 tag 名——见下方
+#      publish 步骤里两条互斥的 `Publish` / `Publish (rehearsal)`：
+#      tag 名含 `rc` 走 TestPyPI，其余走正式 PyPI。验收必须双源安装（TestPyPI
+#      没有 textual 等依赖）：
+#        pip install --index-url https://test.pypi.org/simple/ \
+#                    --extra-index-url https://pypi.org/simple/ 'myrtui==X.Y.ZrcN'
 #
 # 版本号以 pyproject.toml 为唯一真源；tag 必须与之一致（下面 build 步骤会校验）。
 name: release
@@ -117,11 +120,18 @@ jobs:
           name: dist
           path: dist/
 
+      # tag 名决定发到哪个索引：含 `rc` → TestPyPI，其余 → 正式 PyPI。
+      # 刻意用条件而不是「改注释再 revert」——后者依赖人记得改回来，忘了就会把
+      # 正式版本发到 TestPyPI 上（见 docs-internal 的 0.5.0 发布方案 §3-D）。
       - name: Publish
+        if: ${{ !contains(github.ref_name, 'rc') }}
         uses: pypa/gh-action-pypi-publish@release/v1
-        # 首次演练可临时加：
-        #   with:
-        #     repository-url: https://test.pypi.org/legacy/
+
+      - name: Publish (rehearsal)
+        if: ${{ contains(github.ref_name, 'rc') }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
 
   github-release:
     name: github release
