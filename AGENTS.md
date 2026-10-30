@@ -47,6 +47,18 @@ Two rules that exist because breaking them is unrecoverable:
   Same for `fetch`/`ls-remote`. Anything else (`pytest`, GitHub pushes) uses the
   normal `PATH`.
 
+## Branching
+
+- Work happens on `dev` (or a short-lived `feat/…` branch off it). `main` only
+  receives merges that are green and belong to the next release — it is the
+  branch GitHub mirrors, so keep it releasable at all times.
+- `git push` with no arguments pushes the current branch to its upstream, which
+  is **`gitea`** for both `main` and `dev`. Publishing to GitHub is always the
+  explicit `git push origin main` from the release checklist.
+- Merge with `--ff-only` while the branch is a straight line; otherwise a merge
+  commit is fine. Never rebase a branch after pushing it — rewriting a shared
+  branch buys nothing and breaks the mirror comparison.
+
 ## Commands
 
 ```sh
