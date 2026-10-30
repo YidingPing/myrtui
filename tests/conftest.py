@@ -14,6 +14,8 @@ git 仓库**，与原 ``$TMPDIR`` 语义一致（侧栏显示 ``GIT -``）。
 """
 from __future__ import annotations
 
+import os
+
 import pytest
 
 
@@ -67,6 +69,28 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "no_lang_pin: 不让 autouse 夹具钉 MYRTUI_LANG（语言探测类用例）"
     )
+    config.addinivalue_line(
+        "markers",
+        "real_tools: 需要真实外部工具链（Chrome / pdflatex / pdftocairo）；"
+        "默认 skip，MYRTUI_REAL_TOOLS=1 才跑",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    """真机冒烟默认跳过。
+
+    CI 的 macOS runner 与开发机同机，Chrome 在并行负载下会偶发超时 / 空页
+    （实测两次：test_katex_real_pipeline 空结果、test_real_pages 90s 超时），
+    那是工具链抖动。`AGENTS.md` 的口径是这类用例保持手工。
+    """
+    if os.environ.get("MYRTUI_REAL_TOOLS") == "1":
+        return
+    skip = pytest.mark.skip(
+        reason="真机工具链冒烟（Chrome / pdflatex）：设 MYRTUI_REAL_TOOLS=1 才跑"
+    )
+    for item in items:
+        if "real_tools" in item.keywords:
+            item.add_marker(skip)
 
 
 @pytest.fixture

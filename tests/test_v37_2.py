@@ -650,6 +650,7 @@ def test_preview_action_paged_pushes_screen(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.real_tools
 @pytest.mark.skipif(katex.find_chrome() is None, reason="本机没有 Chrome")
 @pytest.mark.skipif(
     mathimg.find_converter() is None, reason="本机没有 pdftocairo"
