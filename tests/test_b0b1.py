@@ -291,12 +291,18 @@ def test_b1_t2b_high_freq_ticks_and_merged_offsets(app_root):
 # ---------- B1 T3：事件循环不阻塞（本计划核心断言） ----------
 
 def test_b1_t3_event_loop_not_blocked(app_root):
-    """T3：fake poll sleep 0.2s 执行期间，独立 25ms 探针最大迟到 < 100ms。
+    """T3：慢 poll 执行期间，事件循环不得被它独占（判定用**相对**迟到）。
 
-    该用例在旧同步代码上必然红（探针迟到 ≈ 200ms）——B1 的回归锚点。
+    PERF-B0B1-PLAN §T3 原本写死「探针最大迟到 < 100ms」，同时注明「对机器速度
+    敏感：慢机上阈值按本机基准校定，先红锚点与断言结构不变」。2026-10-31 在
+    自建 macOS runner 上实测：空闲期迟到就能到 ~90ms，慢 poll 期 127ms，
+    绝对阈值只会制造假红（那台 runner 就是维护者的笔记本）。
+
+    所以改成两段：先量空闲基线，再要求「慢 poll 期」不超过「基线 + 100ms」。
+    旧同步代码会给基线叠加 ≈200ms，基线再高也会红——锚点不变。
     """
     async def scenario():
-        backend = FakeBackend(poll_delay=0.2)
+        backend = FakeBackend()
         app = TerminalApp(backend, app_root)
         async with app.run_test(size=(100, 30)) as pilot:
             await pilot.pause(0.6)
@@ -311,13 +317,22 @@ def test_b1_t3_event_loop_not_blocked(app_root):
                 state["last"] = now
 
             timer = app.set_interval(0.025, probe)
-            app._burst()  # 0.2s 的慢 poll 应在工作线程执行
+            state["last"] = time.monotonic()
+            await pilot.pause(0.5)  # ① 空闲基线
+            idle_worst = max(lateness)
+            lateness.clear()
+
+            backend.poll_delay = 0.2  # ② 0.2s 的慢 poll 应在工作线程执行
+            app._burst()
             await pilot.pause(0.5)
             timer.stop()
 
-            assert lateness, "探针应至少触发一次"
-            worst = max(lateness)
-            assert worst < 0.1, f"事件循环被 poll 阻塞：探针最大迟到 {worst * 1000:.1f}ms"
+            assert len(lateness) > 5, "慢 poll 期间探针应持续触发"
+            slow_worst = max(lateness)
+            assert slow_worst < idle_worst + 0.1, (
+                f"事件循环被 poll 阻塞：空闲基线 {idle_worst * 1000:.1f}ms，"
+                f"慢 poll 期 {slow_worst * 1000:.1f}ms"
+            )
 
     asyncio.run(scenario())
 

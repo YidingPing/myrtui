@@ -305,7 +305,12 @@ def test_app_respawn_most_recent_by_default(backend, app_root):
             await pilot.pause(0.6)
             await pilot.press("ctrl+a"); await pilot.press("t")
             await pilot.press("ctrl+a"); await pilot.press("t")
-            await pilot.pause(0.8)
+            # 等条件，不等固定时长：自建 macOS runner 就是维护者的笔记本，
+            # 慢机上 0.8s 不够用（2026-10-31 CI 实测 1 == 3）。
+            for _ in range(80):
+                if len(app._pane_ids) == 3:
+                    break
+                await pilot.pause(0.1)
             assert len(app._pane_ids) == 3
             ids = list(app._pane_ids)
             backend.send_text(ids[0], "exit"); backend.send_keys(ids[0], "Enter")
