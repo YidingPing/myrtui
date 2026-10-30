@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 from rich.cells import cell_len
-from textual.widgets import Button
+from textual.widgets import Button, Label
 
 from myrtui import i18n
 from myrtui.client import app as app_module
@@ -343,7 +343,7 @@ def test_topbar_fits_80_cols(monkeypatch) -> None:
 
     0.5.1 起顶栏按钮进词表。旧注释写的是「Detach / Kill 刻意保持英文短词：
     顶栏只有一行，中文更长」——**实测相反**：`cell_len(" Detach ")` 是 8，
-    `cell_len(" 分离 ")` 是 6；`" Kill "` 与 `" 关闭 "` 同为 6。中文只会更窄，
+    `cell_len(" 分离 ")` 是 6；`" Kill "` 与 `" 结束 "` 同为 6。中文只会更窄，
     所以那条「宽度不允许中文」的理由不成立（BACKLOG: i18n-hardcoded-topbar）。
     """
     for lang, needles in (
@@ -357,7 +357,7 @@ def test_topbar_fits_80_cols(monkeypatch) -> None:
 
         buttons = got["buttons"]
         assert isinstance(buttons, dict)
-        wanted = {"en": ("Detach", "Kill"), "zh_CN": ("分离", "关闭")}[lang]
+        wanted = {"en": ("Detach", "Kill"), "zh_CN": ("分离", "结束")}[lang]
         for button_id, needle in zip(("#btn-detach", "#btn-kill"), wanted):
             text, width = buttons[button_id]
             assert needle in text, f"{lang}: {button_id} 文案不对：{text!r}"
@@ -372,24 +372,31 @@ def test_topbar_fits_80_cols(monkeypatch) -> None:
 
 
 def test_kill_confirm_buttons_follow_language(monkeypatch) -> None:
-    """关会话的确认框按钮也要跟语言走（0.5.1：曾经是字面量 Kill / Cancel）。
+    """关会话的确认框（正文 + 两个按钮）整体跟语言走。
 
-    破坏性操作的按钮只在这一处出现，80 列的那条用例照不到它。
+    0.5.1：按钮曾经是字面量 Kill / Cancel，正文里还夹着英文 `Kill tmux server`。
+    正文也一起断言，否则「按钮翻译了、正文没翻」这种半截改动照样能绿。
     """
-    for lang, wanted in (("en", ("Kill", "Cancel")), ("zh_CN", ("关闭", "取消"))):
+    cases = (
+        ("en", "Kill the tmux server? Every shell will end.", ("Kill", "Cancel")),
+        ("zh_CN", "结束 tmux 服务？全部 shell 将结束。", ("结束", "取消")),
+    )
+    for lang, message, wanted in cases:
         monkeypatch.setenv(i18n.LANG_ENV, lang)
         i18n.reset_lang()
 
-        async def scenario() -> tuple[str, str]:
+        async def scenario() -> tuple[str, str, str]:
             app = TerminalApp(_FakeBackend(1), tempfile.mkdtemp(prefix="myrtui-i18n-"))
             async with app.run_test(size=(80, 24)) as pilot:
-                app.push_screen(app_module.KillConfirm("x"))
+                app.push_screen(app_module.KillConfirm(i18n.t("app.kill_confirm")))
                 await pilot.pause(0.2)
                 return (
+                    str(app.screen.query_one(Label).render()),
                     str(app.screen.query_one("#yes", Button).label),
                     str(app.screen.query_one("#no", Button).label),
                 )
 
-        assert asyncio.run(scenario()) == wanted, f"{lang}: 确认框按钮没跟语言走"
+        got = asyncio.run(scenario())
+        assert got == (message, *wanted), f"{lang}: 确认框没跟语言走：{got}"
 
     i18n.reset_lang()

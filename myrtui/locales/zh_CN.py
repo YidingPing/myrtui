@@ -11,7 +11,7 @@ MESSAGES: dict[str, str] = {
     "help.title": "快捷键",
     "help.section.prefix": "Ctrl-a 前缀",
     "help.section.sidebar": "侧栏",
-    "help.detach": "detach（前端退出，shell 保留）",
+    "help.detach": "分离（前端退出，shell 保留）",
     "help.kill": "结束会话（需确认）",
     "help.new_pane": "新建 pane",
     "help.close_pane": "关闭当前 pane",
@@ -221,11 +221,11 @@ MESSAGES: dict[str, str] = {
     "app.copied_osc52_only": "{prefix}（仅 OSC 52，终端不支持时无效）",
     "app.nothing_to_paste": "无可粘贴内容",
     "app.pasted": "已粘贴 {count} 字符",
-    "app.kill_confirm": "Kill tmux server？全部 shell 将结束。",
-    "app.kill_confirm_yes": "关闭",
+    "app.kill_confirm": "结束 tmux 服务？全部 shell 将结束。",
+    "app.kill_confirm_yes": "结束",
     "app.kill_confirm_no": "取消",
     "topbar.detach": "分离",
-    "topbar.kill": "关闭",
+    "topbar.kill": "结束",
 
 }
 
