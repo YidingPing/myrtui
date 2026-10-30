@@ -222,6 +222,10 @@ MESSAGES: dict[str, str] = {
     "app.nothing_to_paste": "无可粘贴内容",
     "app.pasted": "已粘贴 {count} 字符",
     "app.kill_confirm": "Kill tmux server？全部 shell 将结束。",
+    "app.kill_confirm_yes": "关闭",
+    "app.kill_confirm_no": "取消",
+    "topbar.detach": "分离",
+    "topbar.kill": "关闭",
 
 }
 

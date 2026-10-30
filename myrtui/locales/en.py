@@ -225,6 +225,12 @@ MESSAGES: dict[str, str] = {
     "app.nothing_to_paste": "Nothing to paste",
     "app.pasted": "Pasted {count} chars",
     "app.kill_confirm": "Kill the tmux server? Every shell will end.",
+    "app.kill_confirm_yes": "Kill",
+    "app.kill_confirm_no": "Cancel",
+    # 顶栏按钮：0.5.1 之前是硬编码英文，理由是「中文更宽」——实测相反
+    # （" Detach " 8 cell vs " 分离 " 6 cell），见 tests/test_i18n.py 的 80 列用例。
+    "topbar.detach": "Detach",
+    "topbar.kill": "Kill",
 
 }
 

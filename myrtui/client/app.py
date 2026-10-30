@@ -411,8 +411,8 @@ class KillConfirm(ModalScreen[bool]):
         with Vertical():
             yield Label(self._message)
             with Horizontal():
-                yield Button("Kill", id="yes", variant="error")
-                yield Button("Cancel", id="no", variant="primary")
+                yield Button(t("app.kill_confirm_yes"), id="yes", variant="error")
+                yield Button(t("app.kill_confirm_no"), id="no", variant="primary")
 
     def on_mount(self) -> None:
         # 默认焦点给 Cancel：Enter 落在破坏性按钮上是误触陷阱（P0 验收报告 §2）

@@ -16,6 +16,7 @@ from textual.message import Message
 from textual.widgets import Label, Static
 
 from myrtui import __version__
+from myrtui.i18n import t
 
 # §12：1..4 布局档 → 最多 4 个 tab（与 app.MAX_PANES 对应，刻意独立成字面量
 # 避免 topbar ↔ app 循环导入；两者同源于设计文档的 4 pane 上限）
@@ -122,8 +123,8 @@ class TopBar(Static):
         for i in range(MAX_TABS):
             yield PaneTab(i)
         yield TopBarButton(" + ", "btn-new")
-        yield TopBarButton(" Detach ", "btn-detach")
-        yield TopBarButton(" Kill ", "btn-kill")
+        yield TopBarButton(f" {t('topbar.detach')} ", "btn-detach")
+        yield TopBarButton(f" {t('topbar.kill')} ", "btn-kill")
         yield TopBarButton(" ? ", "btn-help")
         yield Label("", id="topbar-status")
         yield Label(BRAND_TEXT, id="topbar-brand")

@@ -1,11 +1,13 @@
 """Phase 2（UI 国际化）的守卫（GITHUB-PUBLISH-PLAN §4.3）。
 
-九条用例各自守一件事：
+十条用例各自守一件事：
 
 - 两套词表的 key / 占位符 / 非空值一致（改文案最容易漏其中一条）；
 - 语言解析：默认 ``en``、``zh*`` 识别、缺 key 原样返回；
 - 源码里**只剩**该留的汉字（docstring / 日志实参 / 资源块 / 正则数据），
   以及**没有模块级 t()**（模块级求值会固化语言，测试钉不住）；
+- 控件的文案字面量**要么是 t()，要么是纯符号**（0.5.1 补：汉字守卫只看一个方向，
+  `Button("Kill")` 里一个汉字都没有，于是漏到 0.5.0 的 PyPI 上）；
 - 80 列下顶栏与快捷键浮层两套语言都不溢出。
 
 语言探测类用例打 ``no_lang_pin`` 豁免——conftest 的 autouse 夹具会把
@@ -21,6 +23,7 @@ from pathlib import Path
 
 import pytest
 from rich.cells import cell_len
+from textual.widgets import Button
 
 from myrtui import i18n
 from myrtui.client import app as app_module
@@ -197,6 +200,53 @@ def test_no_module_level_t_call() -> None:
     )
 
 
+# ------------------------------------------------- 英文裸串（0.5.1）
+
+#: 首个位置参数是「用户可见文案」的控件构造函数。
+TEXT_WIDGETS = {"Button", "Checkbox", "Label", "Static", "TopBarButton"}
+
+#: 允许的非常量文案：纯符号（` + `、` ? `）、空串。汉字不在这个豁免里——
+#: 它们归上一条守卫管，两条一起才能盖住「中文没走词表」和「英文没走词表」。
+SYMBOL_ONLY = re.compile(r"^[\s\W_]*$")
+
+
+def _bare_english_widget_text() -> list[str]:
+    """控件构造的第一个位置参数若是字面量，必须是 t() 或纯符号。
+
+    0.5.1 之前只有「源码里不许有游离汉字」那条守卫，它只看一个方向：
+    ``Button("Kill")`` 是英文，AST 里一个汉字都没有，于是一路漏到 PyPI 上的
+    0.5.0（zh_CN 用户看得见）。反向的漏必须靠这条补。
+    """
+    offenders: list[str] = []
+    for path in sorted(SRC.rglob("*.py")):
+        if "locales" in path.parts:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if ast.unparse(node.func).rsplit(".", 1)[-1] not in TEXT_WIDGETS:
+                continue
+            if not node.args:
+                continue
+            first = node.args[0]
+            if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
+                continue  # t() / f-string / 变量：动态拼的不在扫描范围
+            if SYMBOL_ONLY.match(first.value):
+                continue
+            offenders.append(f"{path.relative_to(ROOT)}:{first.lineno}: {first.value[:40]!r}")
+    return offenders
+
+
+def test_no_bare_english_widget_text() -> None:
+    """英文 UI 文案同样必须走 t()——汉字守卫只看一个方向。"""
+    offenders = _bare_english_widget_text()
+    assert not offenders, (
+        "以下控件文案是字面量，应当迁到 locales（纯符号有白名单）：\n  "
+        + "\n  ".join(offenders)
+    )
+
+
 # ---------------------------------------------------------------- 布局（两套语言）
 
 
@@ -289,7 +339,13 @@ def _render_at_80(monkeypatch, lang: str) -> dict:
 
 
 def test_topbar_fits_80_cols(monkeypatch) -> None:
-    """英文比中文宽：80 列下顶栏与浮层都不能被截断（§4.4）。"""
+    """英文比中文宽：80 列下顶栏与浮层都不能被截断（§4.4）。
+
+    0.5.1 起顶栏按钮进词表。旧注释写的是「Detach / Kill 刻意保持英文短词：
+    顶栏只有一行，中文更长」——**实测相反**：`cell_len(" Detach ")` 是 8，
+    `cell_len(" 分离 ")` 是 6；`" Kill "` 与 `" 关闭 "` 同为 6。中文只会更窄，
+    所以那条「宽度不允许中文」的理由不成立（BACKLOG: i18n-hardcoded-topbar）。
+    """
     for lang, needles in (
         ("en", ("Ctrl-a prefix", "every other key goes straight to the shell")),
         ("zh_CN", ("Ctrl-a 前缀", "其余按键直接透传 shell")),
@@ -301,10 +357,10 @@ def test_topbar_fits_80_cols(monkeypatch) -> None:
 
         buttons = got["buttons"]
         assert isinstance(buttons, dict)
-        # Detach / Kill 刻意保持英文短词：顶栏只有一行，中文更长
-        for button_id, needle in (("#btn-detach", "Detach"), ("#btn-kill", "Kill")):
+        wanted = {"en": ("Detach", "Kill"), "zh_CN": ("分离", "关闭")}[lang]
+        for button_id, needle in zip(("#btn-detach", "#btn-kill"), wanted):
             text, width = buttons[button_id]
-            assert needle in text, f"{lang}: {button_id} 文案丢了"
+            assert needle in text, f"{lang}: {button_id} 文案不对：{text!r}"
             assert width >= cell_len(text), f"{lang}: {button_id} 被裁切"
 
         brand, brand_width, brand_right = got["brand"]  # type: ignore[misc]
@@ -313,3 +369,27 @@ def test_topbar_fits_80_cols(monkeypatch) -> None:
         assert not got["over"], f"{lang}: 浮层超宽 {got['over']}"
         assert got["visible"], f"{lang}: 浮层没打开"
         assert got["panel_right"] <= 80, f"{lang}: 浮层越界"
+
+
+def test_kill_confirm_buttons_follow_language(monkeypatch) -> None:
+    """关会话的确认框按钮也要跟语言走（0.5.1：曾经是字面量 Kill / Cancel）。
+
+    破坏性操作的按钮只在这一处出现，80 列的那条用例照不到它。
+    """
+    for lang, wanted in (("en", ("Kill", "Cancel")), ("zh_CN", ("关闭", "取消"))):
+        monkeypatch.setenv(i18n.LANG_ENV, lang)
+        i18n.reset_lang()
+
+        async def scenario() -> tuple[str, str]:
+            app = TerminalApp(_FakeBackend(1), tempfile.mkdtemp(prefix="myrtui-i18n-"))
+            async with app.run_test(size=(80, 24)) as pilot:
+                app.push_screen(app_module.KillConfirm("x"))
+                await pilot.pause(0.2)
+                return (
+                    str(app.screen.query_one("#yes", Button).label),
+                    str(app.screen.query_one("#no", Button).label),
+                )
+
+        assert asyncio.run(scenario()) == wanted, f"{lang}: 确认框按钮没跟语言走"
+
+    i18n.reset_lang()
