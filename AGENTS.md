@@ -115,8 +115,8 @@ documents the known traps: shell-readiness races, stdout capture inside Textual,
 - Textual timing is not deterministic: wait for a condition
   (`await pilot.pause()` in a loop / helper), never a single fixed `sleep`.
   `tests/test_v36.py::_scroll_preview` is the reference pattern.
-- Real-tool smoke tests (Sixel, Chrome, `termtex`) stay manual; unit tests must
-  pass without them.
+- Real-tool smoke tests (Sixel, Chrome, `termtex`) stay manual: CI skips them
+  unless `MYRTUI_REAL_TOOLS=1`, and unit tests must pass without them.
 
 ## Where things go
 

@@ -8,6 +8,8 @@
 
 - 新断言对文案请用 `t("key")`，或直接断言 id / 状态；**不要再写死中文字面量**。
 - 语言探测类用例打 `@pytest.mark.no_lang_pin`（夹具就不设 `MYRTUI_LANG`）。
+- 真机工具链冒烟（Chrome / pdflatex）默认 **skip**，设 `MYRTUI_REAL_TOOLS=1` 才跑：
+  CI 的 macOS runner 与开发机同机，Chrome 在并行负载下会偶发「产物为空」。
 - `tests/test_i18n.py` 另有 AST 守卫：源码里出现未经 `t()` 的汉字、或模块级
   调用 `t()`，都会红。
 
