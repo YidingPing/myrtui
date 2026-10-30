@@ -147,7 +147,7 @@ fix the test's condition, do not change product code.
 | You are writing… | Put it in… |
 |---|---|
 | user docs (install, usage, architecture) | `docs/` in this repo (allowed list enforced by `tests/test_docs_policy.py`) |
-| design notes / plans / acceptance records | `docs-internal/docs/` (nested repo) — **not** `docs/` |
+| design notes / plans / acceptance records | `docs-internal/docs/<minor>/` (nested repo) — **not** `docs/`. One directory per minor version, one file per patch release: `0.6/0.6.1-PLAN.md`, or `0.6/0.6.0-<topic>-PLAN.md` for a single feature. Older `V37-…` / `P0-…` documents keep their names: code comments reference them by path |
 | release notes | GitHub Releases (generated at tag time) |
 | a module's rationale | the module's header docstring (Chinese) |
 
