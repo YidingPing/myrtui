@@ -147,7 +147,8 @@ fix the test's condition, do not change product code.
 | You are writing… | Put it in… |
 |---|---|
 | user docs (install, usage, architecture) | `docs/` in this repo (allowed list enforced by `tests/test_docs_policy.py`) |
-| design notes / plans / acceptance records | `docs-internal/docs/<minor>/` (nested repo) — **not** `docs/`. One directory per minor version, one file per patch release: `0.6/0.6.1-PLAN.md`, or `0.6/0.6.0-<topic>-PLAN.md` for a single feature. Older `V37-…` / `P0-…` documents keep their names: code comments reference them by path |
+| design notes / plans / acceptance records for a **scheduled** release | `docs-internal/docs/<minor>/` (nested repo) — **not** `docs/`. One directory per minor version, one file per patch release: `0.6/0.6.1-PLAN.md`, or `0.6/0.6.0-<topic>-PLAN.md` for a single feature. Older `V37-…` / `P0-…` documents keep their names: code comments reference them by path |
+| ideas, candidates, anything **not yet scheduled** | `docs-internal/docs/BACKLOG.md` (nested repo) — one pool across all versions. Never park a candidate inside a version plan: a plan is a commitment with criteria, and mixing the two turns it into a ledger. When an item is scheduled, copy it into the version's `PLAN.md`; when it ships, leave one line in the backlog's "done" table instead of deleting it |
 | release notes | GitHub Releases (generated at tag time) |
 | a module's rationale | the module's header docstring (Chinese) |
 
