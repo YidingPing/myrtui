@@ -23,6 +23,7 @@ from myrtui.client.app import TerminalApp
 from myrtui.client.pane_widget import PaneWidget
 from myrtui.client.shortcuts import SECTIONS, ShortcutHelp
 from myrtui.client.topbar import TopBar
+from myrtui.i18n import t
 from myrtui.tmux_backend import CaptureResult, PaneInfo
 
 PANE_TEXT = "abcdefghij\nsecond line\n"
@@ -129,7 +130,7 @@ def test_hover_help_shows_panel_with_full_shortcut_list(monkeypatch):
             await pilot.pause(0.1)
             assert panel.display, "悬停 `?` 应弹出浮层"
             text = _texts(panel)
-            for needle in ("Ctrl-a 前缀", "detach", "聚焦 Git 历史", "侧栏", "打开 / 预览 / 复制路径", "透传 shell"):
+            for needle in ("Ctrl-a 前缀", t("help.detach"), "聚焦 Git 历史", "侧栏", "打开 / 预览 / 复制路径", "透传 shell"):
                 assert needle in text
             assert panel.region.y == 1, "浮层应紧贴顶栏下沿"
             assert panel.region.right <= 120
