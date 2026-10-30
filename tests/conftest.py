@@ -57,7 +57,13 @@ def _pin_ui_language(request, monkeypatch, tmp_path):
 
     monkeypatch.setenv(i18n.CONFIG_ENV, str(tmp_path / "config.json"))
     if request.node.get_closest_marker("no_lang_pin"):
-        monkeypatch.delenv(i18n.LANG_ENV, raising=False)
+        # 语言探测类用例要自己决定语言，必须连同 locale 变量一起清干净：
+        # GitHub 的 macOS runner 导出 ``LC_ALL=en_US.UTF-8``，而 resolve_lang 的
+        # 优先级是 LC_ALL > LC_MESSAGES > LANG——只删 MYRTUI_LANG 时，用例虽然
+        # setenv("LANG", "zh_CN.UTF-8")，仍会被 LC_ALL 判成 en。
+        # （0.5.0 首次发布演练在 macOS verify 上就红在这里，本机没有 LC_ALL 所以没暴露。）
+        for var in (i18n.LANG_ENV, "LC_ALL", "LC_MESSAGES", "LANG"):
+            monkeypatch.delenv(var, raising=False)
     else:
         monkeypatch.setenv(i18n.LANG_ENV, "zh_CN")
     i18n.reset_lang()
