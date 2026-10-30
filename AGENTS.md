@@ -98,10 +98,12 @@ documents the known traps: shell-readiness races, stdout capture inside Textual,
   rationale therefore land in *two* commits. Before reporting a task done, run
   `git -C docs-internal status --short` — a design note left uncommitted there
   is invisible in this repo's status.
-- **Do not name internal documents in commit subjects or user-facing text**
-  (README, `docs/`, CLI output). Say "internal notes (V37)" if a pointer is
-  needed. Code comments may keep `docs-internal/docs/…` paths: they are the
-  maintainer's memory aid and are not published.
+- **Do not name internal documents in commit subjects or bodies, or in
+  user-facing text** (README, `docs/`, CLI output). The public history is not the
+  private repo's changelog: say "internal notes (V37)" or "the internal notes repo"
+  if a pointer is needed. Code comments and this file may keep
+  `docs-internal/docs/…` paths: they are the maintainer's memory aid and are not
+  published.
 - **Do not `git push --tags`.** Only the release tag for the version being
   published may be pushed, and only to `origin`.
 - **Do not rewrite history**, force-push `main`, or touch `python -m build`
