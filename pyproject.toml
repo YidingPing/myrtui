@@ -82,7 +82,9 @@ include = [
     "/pyproject.toml",
     "/myrtui",
     "/tests",
-    "/scripts",
+    # 只带用户可见的安装脚本；affected_tests.py / demo.tape 是开发与文档工具，
+    # spike_* 与 bench_* 是一次性实验（已移到内部仓），都不该出现在 PyPI 源码包里。
+    "/scripts/install.sh",
     "/docs/USAGE.md",
     "/docs/USAGE.zh-CN.md",
     "/docs/ARCHITECTURE.md",

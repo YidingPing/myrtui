@@ -211,3 +211,18 @@ def test_version_declared_consistently() -> None:
         "版本号不一致：pyproject.toml=%s，__init__.py=%s——发版时两处必须同步"
         % (declared, match.group(1))
     )
+
+
+def test_sdist_ships_only_the_installer_from_scripts() -> None:
+    """``scripts/`` 只有 ``install.sh`` 该进 sdist。
+
+    0.5.0 之前白名单写的是整个 ``/scripts``，于是 PyPI 源码包里混进了
+    ``affected_tests.py``、``demo.tape`` 与 4 个 spike/bench 脚本——用户用不上，
+    却要下载、还会以为项目结构乱。实验脚本已移到内部仓，这里把口径锁死。
+    """
+    data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    include = data["tool"]["hatch"]["build"]["targets"]["sdist"]["include"]
+    script_entries = [e for e in include if e.lstrip("/").startswith("scripts/")]
+    assert script_entries == ["/scripts/install.sh"], (
+        "sdist 的 scripts/ 白名单只允许 install.sh，实际是：%s" % script_entries
+    )

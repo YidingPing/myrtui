@@ -1,33 +1,24 @@
 # myrtui CI（Gitea Actions，自建 runner）
 #
-# 基础设施：内网 Gitea 1.24.6 + 三台 gitea-runner 4.1.0（全部 host 模式，标签取
-# GitHub 风格名，使 runs-on 可直接写 ubuntu-latest / macos-latest）。本 workflow
-# 只用其中两台；Windows runner 用不上（cli.py 依赖 fcntl，tmux 也无原生版）。
+# 本仓的**日常** CI 只在这里跑：Gitea 是源仓，GitHub 只收 main 与发布 tag
+# （发布链见 .github/workflows/release.yml，那几个 job 用 github.server_url
+# 守卫，避免同一份文件在另一套 Actions 上误跑）。
 #
-# 三个刻意的取舍（都不是 GitHub 托管 runner 的写法）：
+# 三个刻意的取舍：
 #
 # 1. `builtin:checkout` 而非 `actions/checkout@v4`
-#    —— runner 4.x 内置的 Go 实现，直接从 Gitea 克隆：零 github.com 依赖
-#    （本网络到 github 的链路不稳定，曾连续 i/o timeout），也不需要 node。
+#    —— runner 内置的 Go 实现，直接从 Gitea 克隆：不依赖 github.com（本机到
+#    那边的链路不稳，曾连续 i/o timeout），也不需要 node。
 #
 # 2. 不用 `actions/setup-python`
-#    —— 同上（它要从 github 下载解释器）。两台 runner 各自带一个满足
+#    —— 同上，它要从 github 下载解释器。两台 runner 各自带一个满足
 #    `requires-python >= 3.10` 的解释器，选择链见 "Set up Python"。
 #
 # 3. 只有 macos + ubuntu 两格，没有 Python 版本矩阵
-#    —— 自建 runner 各带一个解释器（macOS: Homebrew 3.14；Ubuntu:
-#    /usr/bin/python3.14）。release.yml 也只跑 macOS 3.13 verify + ubuntu 3.12
-#    build，**没有版本矩阵**——classifiers 声明 3.10–3.14，但只有 3.12/3.13 真过
-#    CI；补矩阵这件事留待后续版本，别在这条注释里假装已经覆盖了。
+#    —— 每台 runner 只有一个解释器；release.yml 也只跑 macOS 3.13 verify +
+#    ubuntu 3.12 build，**没有版本矩阵**——classifiers 声明 3.10–3.14，但只有
+#    3.12/3.13 真过 CI；补矩阵留待后续版本，别在这条注释里假装已经覆盖。
 #
-# 两台 runner 的现状（一次性探针实测）：
-#   macos-latest : macOS arm64 / python3.14 / tmux 3.8
-#   ubuntu-latest: Ubuntu WSL2 / python3.14 **无 pip、无 ensurepip** /
-#                  sudo 需密码（装不了系统包）/ tmux 3.6
-# → Ubuntu 侧必须自带 pip 引导链，见 "Install dependencies"。
-#
-# 工作流所在目录：`.gitea/workflows/` 是 Gitea 的原生路径，GitHub 不读它；
-# 发布链路（tag → PyPI）在 `.github/workflows/release.yml`，只跑在 GitHub。
 name: ci
 
 on:
