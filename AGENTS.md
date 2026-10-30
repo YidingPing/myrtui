@@ -70,9 +70,11 @@ Two rules that exist because breaking them is unrecoverable:
 ```sh
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
-python -m pytest -n 4                    # full suite, ~100 s
-python -m pytest tests/test_v36.py -q    # one area
+python scripts/affected_tests.py --run   # only what your change touches (~10 s)
+python -m pytest -n 4                    # full suite, ~110 s
+python -m pytest tests/test_v36.py -q    # one file
 python -m pytest -q -k scroll            # one behaviour
+python -m pytest --lf -q                 # only the failures from last run
 ```
 
 `tmux >= 3.1` must be on `PATH`; tests start isolated tmux servers (uuid socket
@@ -96,6 +98,10 @@ documents the known traps: shell-readiness races, stdout capture inside Textual,
   rationale therefore land in *two* commits. Before reporting a task done, run
   `git -C docs-internal status --short` — a design note left uncommitted there
   is invisible in this repo's status.
+- **Do not name internal documents in commit subjects or user-facing text**
+  (README, `docs/`, CLI output). Say "internal notes (V37)" if a pointer is
+  needed. Code comments may keep `docs-internal/docs/…` paths: they are the
+  maintainer's memory aid and are not published.
 - **Do not `git push --tags`.** Only the release tag for the version being
   published may be pushed, and only to `origin`.
 - **Do not rewrite history**, force-push `main`, or touch `python -m build`
@@ -105,6 +111,24 @@ documents the known traps: shell-readiness races, stdout capture inside Textual,
   there; anything internal must not be.
 
 ## Testing expectations
+
+**Do not run the full suite after every edit.** `scripts/affected_tests.py`
+reads `git diff`, maps changed files to the tests that import them (direct, plus
+one level of importers, never through the app-shell hubs) and prints or runs the
+right command:
+
+| You changed | Run | Local |
+|---|---|---|
+| only `*.md` (README / docs / AGENTS) | `pytest -q tests/test_docs_policy.py` | ~2 s |
+| `myrtui/locales/*` | `pytest -q tests/test_i18n.py tests/test_docs_policy.py` | ~3 s |
+| `myrtui/i18n.py`, `cli.py`, `tmux_backend.py`, `layout_state.py`, `conftest.py` | full suite (shared surface) | ~110 s |
+| one feature module (`mdpreview`, `instances`, `mathimg`, …) | `scripts/affected_tests.py --run` | 10–20 s |
+| `client/app.py` / `pane_widget.py` | full suite (everything goes through them) | ~110 s |
+| before pushing `dev`, merging `main`, or tagging | full suite **once** | ~110 s |
+
+CI still runs everything, so a missed file costs one CI round — not a broken
+`main`. A failure that passes three times in isolation is environment jitter:
+fix the test's condition, do not change product code.
 
 - Every behaviour change needs a regression test that fails before the fix.
 - Tests assert on **ids/state**, not on translated labels, wherever practical.

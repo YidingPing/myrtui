@@ -1,5 +1,30 @@
 # myrtui 测试说明
 
+## 测试策略（省时间）
+
+**不要每次改动都跑全量。** `python scripts/affected_tests.py --run` 会读
+`git diff`（默认基线 `main`），把改动文件映射到「import 过它的测试」：
+
+- 测试**直接** import 的模块才算；再沿「谁 import 了它」**上溯两层**，让
+  `cells` 这种没有测试直接 import 的叶子也能落到 `fileview` 的用例上；
+- 上溯**不穿过枢纽**（被 ≥6 个测试直接 import 的 `app` / `tmux_backend` /
+  `pane_widget` / `client` / `file_tree` / `topbar`）——否则改任何 app 依赖
+  都会命中 24/30 个文件，等于没筛；
+- 命中的测试超过 60%，或改了共享面（`cli` / `i18n` / `layout_state` /
+  `tmux_backend` / `conftest` / 任何 `__init__.py`），直接建议全量；
+- 纯文档 / `pyproject.toml` → 只跑 `test_docs_policy.py`（约 2 秒）；
+  `scripts/` 不被测试 import，直接跳过。
+
+| 改了什么 | 跑什么 | 本机实测 |
+|---|---|---|
+| 只改 `*.md` | `pytest -q tests/test_docs_policy.py` | 2 s |
+| `myrtui/locales/*` | `pytest -q tests/test_i18n.py tests/test_docs_policy.py` | 3 s |
+| 一个功能模块（如 `mdpreview`） | `scripts/affected_tests.py --run` | 12 s |
+| `client/app.py` / 共享面 | 全量 `-n 4` | 110 s |
+
+CI 仍然全量跑（ubuntu + macOS），所以漏筛一个文件最多多花一轮 CI，不会让坏
+代码进 `main`。**失败的用例单独跑三次都过 = 环境抖动**，不要改产品代码。
+
 ## UI 语言
 
 `tests/conftest.py` 的 autouse 夹具把 `MYRTUI_LANG` 钉成 `zh_CN`，并把

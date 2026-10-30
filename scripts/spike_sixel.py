@@ -13,7 +13,7 @@
 如果在外层 tmux 里，先看 `tmux show -gv allow-passthrough` 与
 `terminal-features` 是否认识 Sixel。
 
-观察项见 `docs/V37-SIXEL-GRAPHICS-PLAN.md` §3。第 1/3 张是原始 RGBA，
+观察项见内部图形方案（V37）§3。第 1/3 张是原始 RGBA，
 第 2/4 张已预合成到背景色 `#808080`：预合成版的透明洞应与画布完全同色
 （看不出圆），原始版会露出终端自己的填充色。若对比成立，说明正式实现必须
 自己 flatten alpha（Tabby 的 Sixel 插件不做 P2=1 透明合成）。
