@@ -22,7 +22,7 @@
 #   - 装/升级走同一条命令：重跑本脚本即可。
 #
 # 可覆盖的环境变量：
-#   MYRTUI_VERSION   固定版本（如 0.4.4；默认装 PyPI 上的最新版）
+#   MYRTUI_VERSION   固定版本（如 0.5.0；默认装 PyPI 上的最新版）
 #   MYRTUI_PREFIX    venv 兜底安装位置（默认 ~/.local/opt/myrtui）
 #   MYRTUI_DEPS      ask（默认）/ yes / no：是否尝试安装缺失的依赖
 #

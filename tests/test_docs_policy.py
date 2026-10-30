@@ -14,6 +14,7 @@
 - 已跟踪文件里不得出现 RFC1918 私网地址（内网 Gitea 曾散落在 README、
   install.sh 与 release 脚本里）；
 - ``pyproject.toml`` 的 sdist 白名单只能包含 ``docs/`` 下同样被允许的文件。
+- ``pyproject.toml`` 与 ``myrtui/__init__.py`` 的版本号必须一字不差。
 """
 from __future__ import annotations
 
@@ -185,4 +186,28 @@ def test_sdist_whitelist_covers_only_public_docs() -> None:
     assert not unexpected, (
         "sdist 只能打包 docs/ 下的公开文档，以下条目不应出现：\n  "
         + "\n  ".join(unexpected)
+    )
+
+
+def test_version_declared_consistently() -> None:
+    """``pyproject.toml`` 与 ``myrtui/__init__.py`` 的版本必须一字不差。
+
+    发版时这两处都要改：pyproject 决定 wheel 的元数据（用户 ``pip show`` /
+    ``pip install myrtui==X`` 看到的值），``__version__`` 是开发安装与
+    ``myrtui --version`` 的兜底。少改一处，用户报上来的版本号就不可信，
+    而且 ``importlib.metadata`` 与 ``__version__`` 会各说各话——这种偏差只能
+    靠测试发现，人工 review 最容易漏。
+    """
+    declared = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]["version"]
+    match = re.search(
+        r'^__version__\s*=\s*"([^"]+)"',
+        (ROOT / "myrtui" / "__init__.py").read_text(encoding="utf-8"),
+        re.M,
+    )
+    assert match, "myrtui/__init__.py 里找不到 __version__ = \"...\""
+    assert match.group(1) == declared, (
+        "版本号不一致：pyproject.toml=%s，__init__.py=%s——发版时两处必须同步"
+        % (declared, match.group(1))
     )

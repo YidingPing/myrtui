@@ -16,8 +16,9 @@
 #
 # 3. 只有 macos + ubuntu 两格，没有 Python 版本矩阵
 #    —— 自建 runner 各带一个解释器（macOS: Homebrew 3.14；Ubuntu:
-#    /usr/bin/python3.14）。3.10–3.14 的版本覆盖由 release.yml 在 GitHub 上跑
-#    （公开仓的 GitHub runner 免费），日常不付这份代价。
+#    /usr/bin/python3.14）。release.yml 也只跑 macOS 3.13 verify + ubuntu 3.12
+#    build，**没有版本矩阵**——classifiers 声明 3.10–3.14，但只有 3.12/3.13 真过
+#    CI；补矩阵这件事留待后续版本，别在这条注释里假装已经覆盖了。
 #
 # 两台 runner 的现状（一次性探针实测）：
 #   macos-latest : macOS arm64 / python3.14 / tmux 3.8

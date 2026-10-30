@@ -1,9 +1,12 @@
 [project]
 name = "myrtui"
-version = "0.4.4"
+version = "0.5.0rc1"
 description = "Lightweight per-project terminal workspace: file tree + git log + up to 4 real tmux panes, in Textual"
 readme = "README.md"
 requires-python = ">=3.10"
+# PEP 639 SPDX 表达式：让 wheel METADATA 带上机器可读的 License-Expression。
+# license classifier 暂时保留（两者并存由 twine check 判定是否需删）。
+license = "MIT"
 authors = [{ name = "Yiding Ping" }]
 keywords = ["tui", "terminal", "tmux", "textual", "multiplexer", "workspace"]
 classifiers = [
