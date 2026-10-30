@@ -37,6 +37,38 @@ def _isolate_ssh_env(monkeypatch):
         monkeypatch.delenv(key, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _pin_ui_language(request, monkeypatch, tmp_path):
+    """把 UI 语言钉成 ``zh_CN``，并把用户配置隔离掉。
+
+    两个理由：
+
+    1. 存量测试里有 295 条含汉字的断言、其中 33 条逐字命中 UI 文案；把语言
+       钉成 ``zh_CN`` 就能让它们零改动继续通过（新用例才要求走 ``t(key)``）。
+    2. 开发机的 ``LANG`` / ``~/.local/share/myrtui/config.json`` 不能让测试语义
+       漂移——``MYRTUI_CONFIG`` 指到临时路径，配置文件不存在即「没配」。
+
+    语言探测类用例打 ``@pytest.mark.no_lang_pin`` 豁免（否则 ``MYRTUI_LANG``
+    会被先设成 ``zh_CN``，``test_default_is_en`` 必然红）。
+    """
+    from myrtui import i18n
+
+    monkeypatch.setenv(i18n.CONFIG_ENV, str(tmp_path / "config.json"))
+    if request.node.get_closest_marker("no_lang_pin"):
+        monkeypatch.delenv(i18n.LANG_ENV, raising=False)
+    else:
+        monkeypatch.setenv(i18n.LANG_ENV, "zh_CN")
+    i18n.reset_lang()
+    yield
+    i18n.reset_lang()
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "no_lang_pin: 不让 autouse 夹具钉 MYRTUI_LANG（语言探测类用例）"
+    )
+
+
 @pytest.fixture
 def app_root(tmp_path) -> str:
     """小而确定的项目根（每个用例独立，避免跨用例共享状态）。"""

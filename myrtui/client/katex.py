@@ -27,6 +27,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
+from myrtui.i18n import t
 
 log = logging.getLogger("myrtui.katex")
 
@@ -210,12 +211,12 @@ def print_pdf(
     if completed.returncode != 0:
         detail = completed.stderr.decode("utf-8", "replace").strip()
         raise RuntimeError(
-            f"Chrome 退出码 {completed.returncode}: {detail[-300:]}"
+            t("math.chrome_exit", code=completed.returncode, detail=detail[-300:])
         )
     try:
         head = pdf_path.read_bytes()[: len(PDF_MAGIC)]
     except OSError as exc:
-        raise RuntimeError(f"Chrome 未产出 PDF: {exc}") from exc
+        raise RuntimeError(t("math.chrome_no_pdf", exc=exc)) from exc
     if head != PDF_MAGIC:
-        raise RuntimeError("Chrome 产物不是 PDF")
+        raise RuntimeError(t("math.chrome_not_pdf"))
     return pdf_path

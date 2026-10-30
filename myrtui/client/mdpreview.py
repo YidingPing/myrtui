@@ -46,6 +46,7 @@ from myrtui.client.mathtext import (
     math_parser_factory,
     normalize_math_delimiters,
 )
+from myrtui.i18n import t
 
 # v0.37 起数学 / 图片块是普通 Widget，**不再依赖** Textual 的私有
 # ``MarkdownBlock``（v0.36 需要继承它）。Markdown.update 接受
@@ -56,8 +57,6 @@ log = logging.getLogger("myrtui.mdpreview")
 MARKDOWN_PREVIEW_MAX_BYTES = 512_000
 """Markdown 预览的入口上限（512 KiB）；超过提示用「打开」。"""
 
-FOOTER = "Esc 返回 · r 重载 · v LaTeX 排版 · ↑↓/PgUp/PgDn 滚动"
-LINK_NOTICE = "预览不打开链接"
 IMAGE_ALT_PREFIX = "🖼 "
 
 DEFAULT_FOREGROUND = "#E0E0E0"
@@ -426,9 +425,9 @@ class MarkdownPreviewScreen(ModalScreen[None], inherit_bindings=False):
             self._relative, id="mdpreview-header", markup=False
         )
         with VerticalScroll(id="mdpreview-scroll"):
-            yield Static("渲染中…", id="mdpreview-placeholder", markup=False)
+            yield Static(t("md.rendering"), id="mdpreview-placeholder", markup=False)
             yield self._markdown
-        yield Static(FOOTER, id="mdpreview-footer", markup=False)
+        yield Static(t("md.footer"), id="mdpreview-footer", markup=False)
 
     def on_mount(self) -> None:
         self._markdown.display = False
@@ -477,7 +476,7 @@ class MarkdownPreviewScreen(ModalScreen[None], inherit_bindings=False):
             # 文件被删 / 无权限：不在这里判死，交给 read_for_preview 出可读原因。
             size = None
         if size is not None and size > MARKDOWN_PREVIEW_MAX_BYTES:
-            self._show_message("Markdown 过大（>512 KiB），请用「打开」")
+            self._show_message(t("md.too_large"))
             self._restore_scroll = None
             return
 
@@ -490,11 +489,11 @@ class MarkdownPreviewScreen(ModalScreen[None], inherit_bindings=False):
             self._restore_scroll = None
             return
         if preview.binary:
-            self._show_message("二进制文件，暂不支持预览")
+            self._show_message(t("md.binary"))
             self._restore_scroll = None
             return
         if not preview.text.strip():
-            self._show_message("空文件")
+            self._show_message(t("md.empty"))
             self._restore_scroll = None
             return
 
@@ -537,7 +536,7 @@ class MarkdownPreviewScreen(ModalScreen[None], inherit_bindings=False):
             await self._markdown.update(normalized)
         except Exception:  # noqa: BLE001 —— 渲染失败只提示，可 r 重试
             log.warning("mdpreview render failed", exc_info=True)
-            self._show_message("Markdown 渲染失败（r 可重试）")
+            self._show_message(t("md.render_failed"))
             self._restore_scroll = None
             return
         if not self._alive():
@@ -547,7 +546,7 @@ class MarkdownPreviewScreen(ModalScreen[None], inherit_bindings=False):
         if warning:
             self._notice(warning, seconds=6.0)
         else:
-            self._set_footer(FOOTER)
+            self._set_footer(t("md.footer"))
         self._restore_after_reload()
 
     def _theme_colors(self) -> tuple[str, str]:
@@ -604,7 +603,7 @@ class MarkdownPreviewScreen(ModalScreen[None], inherit_bindings=False):
     def _set_loading(self) -> None:
         self._markdown.display = False
         placeholder = self._placeholder()
-        placeholder.update("渲染中…")
+        placeholder.update(t("md.rendering"))
         placeholder.display = True
 
     def _show_message(self, message: str) -> None:
@@ -639,7 +638,7 @@ class MarkdownPreviewScreen(ModalScreen[None], inherit_bindings=False):
 
     def _restore_footer(self) -> None:
         self._notice_timer = None
-        self._set_footer(FOOTER)
+        self._set_footer(t("md.footer"))
 
     # 恢复滚动位置：内容布局要等 Markdown 的行渲染完成，慢机器 / xdist 下
     # ``call_after_refresh`` 可能早于 layout（scroll_y 被 clamp 回 0 且不再回来）。
@@ -690,7 +689,7 @@ class MarkdownPreviewScreen(ModalScreen[None], inherit_bindings=False):
             self._notice(graphics_mod.blocked_reason(self._graphics), seconds=6.0)
             return
         if not self._text.strip():
-            self._notice("文档还没渲染好")
+            self._notice(t("md.not_ready"))
             return
         from myrtui.client.pageview import PagedDocScreen  # noqa: PLC0415 —— 避免循环 import
 
@@ -707,4 +706,4 @@ class MarkdownPreviewScreen(ModalScreen[None], inherit_bindings=False):
         """链接不导航（F1：textual 8.2.8 沿 MRO 分发，必须 prevent_default）。"""
         event.prevent_default()
         event.stop()
-        self._notice(LINK_NOTICE)
+        self._notice(t("md.no_links"))

@@ -340,9 +340,7 @@ def test_shortcut_table_covers_every_prefix_branch():
 
     source = inspect.getsource(TerminalApp.on_key)
     branch_letters = set(re.findall(r'key == "([a-z])"', source))
-    prefix_rows = next(
-        section for section in SECTIONS if section.title.startswith("Ctrl-a")
-    ).rows
+    prefix_rows = next(section for section in SECTIONS if section.id == "prefix").rows
     table = {row.keys for row in prefix_rows}
     table_letters = {k for k in table if len(k) == 1 and k.isalpha()}
     assert branch_letters, "没有解析到前缀分支，防止正则失效后假绿"

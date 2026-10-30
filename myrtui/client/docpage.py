@@ -29,6 +29,7 @@ import platformdirs
 
 from myrtui.client import katex, mathimg, mathrender
 from myrtui.client.mathtext import is_probably_math, math_parser_factory
+from myrtui.i18n import t
 
 log = logging.getLogger("myrtui.docpage")
 
@@ -643,7 +644,12 @@ def _run(
     if completed.returncode != 0:
         detail = (completed.stderr or b"").decode("utf-8", "replace").strip()
         raise PageRenderError(
-            f"{Path(command[0]).name} 退出码 {completed.returncode}: {detail[-300:]}"
+            t(
+                "page.exit_code",
+                tool=Path(command[0]).name,
+                code=completed.returncode,
+                detail=detail[-300:],
+            )
         )
 
 
@@ -736,10 +742,10 @@ def render_pages(
 
     chrome = katex.find_chrome()
     if chrome is None:
-        raise PageRenderError("未找到 Chrome/Chromium（LaTeX 排版需要它）")
+        raise PageRenderError(t("page.no_chrome"))
     converter = mathimg.find_converter()
     if converter is None:
-        raise PageRenderError("未找到 pdftocairo / pdftoppm")
+        raise PageRenderError(t("page.no_converter"))
 
     html = build_document_html(text, colors=colors, spec=spec, base_dir=base_dir)
     with tempfile.TemporaryDirectory(prefix="myrtui-pages-") as tmp:
@@ -755,7 +761,7 @@ def render_pages(
         else:
             printer(chrome, html_path, pdf, profile_dir=profile, timeout=timeout)
         if not pdf.is_file() or pdf.stat().st_size == 0:
-            raise PageRenderError("Chrome 没有产出 PDF")
+            raise PageRenderError(t("page.chrome_no_pdf"))
 
         prefix = workdir / "p"
         command = [converter[0], "-png", "-r", str(int(CSS_DPI))]
@@ -767,9 +773,9 @@ def render_pages(
             if path.stat().st_size > len(mathimg.PNG_MAGIC)
         ]
         if not pages:
-            raise PageRenderError("PDF 没有转出任何页面")
+            raise PageRenderError(t("page.no_pages_from_pdf"))
         if len(pages) > MAX_PAGES:
-            raise PageRenderError(f"页数过多（{len(pages)} > {MAX_PAGES}）")
+            raise PageRenderError(t("page.too_many_pages", count=len(pages), max=MAX_PAGES))
 
         root.mkdir(parents=True, exist_ok=True)
         for page in pages:

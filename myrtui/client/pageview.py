@@ -25,6 +25,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Static
 
 from myrtui.client import docpage, graphics as graphics_mod
+from myrtui.i18n import t
 
 log = logging.getLogger("myrtui.pageview")
 
@@ -34,8 +35,6 @@ PLACEHOLDER_ID = "paged-placeholder"
 
 RESIZE_DEBOUNCE = 0.5
 """resize 之后等这么久再重渲染（拖窗口时不要每帧都印 PDF）。"""
-
-EMPTY = "LaTeX 排版中…（Chrome 打印 PDF → 分页）"
 
 
 class _PageScroll(VerticalScroll):
@@ -100,7 +99,7 @@ class PagedDocScreen(ModalScreen[None], inherit_bindings=False):
     def compose(self) -> ComposeResult:
         yield Static(self._relative, id=HEADER_ID, markup=False)
         with _PageScroll(id=SCROLL_ID):
-            yield Static(EMPTY, id=PLACEHOLDER_ID, markup=False)
+            yield Static(t("page.placeholder"), id=PLACEHOLDER_ID, markup=False)
 
     def on_mount(self) -> None:
         # 颜色放在 CSS 变量之外：Textual 的 CSS 不能插 Python 值，只能挂载后设。
@@ -156,7 +155,7 @@ class PagedDocScreen(ModalScreen[None], inherit_bindings=False):
         if spec is None:
             return
         try:
-            self._set_status(EMPTY)
+            self._set_status(t("page.placeholder"))
             if refresh:
                 await asyncio.to_thread(
                     docpage.invalidate,
@@ -188,17 +187,17 @@ class PagedDocScreen(ModalScreen[None], inherit_bindings=False):
             log.debug("LaTeX 排版失败", exc_info=True)
             if self.is_mounted:
                 try:
-                    self._set_status(f"LaTeX 排版失败：{exc}（Esc 返回文本预览）")
+                    self._set_status(t("page.failed", exc=exc))
                 except Exception:  # noqa: BLE001 —— 连提示都放不下就只留日志
                     log.debug("LaTeX 排版失败提示也失败", exc_info=True)
 
     async def _mount_pages(self, pages: list[Path], spec: docpage.PageSpec) -> None:
         widget_cls = self._widget_class()
         if widget_cls is None:
-            self._set_status("当前终端没有位图协议，LaTeX 排版不可用（Esc 返回）")
+            self._set_status(t("page.no_bitmaps"))
             return
         if not pages:
-            self._set_status("没有可显示的页面（Esc 返回）")
+            self._set_status(t("page.no_pages"))
             return
         self._pages = list(pages)
         container = self.query_one(f"#{SCROLL_ID}", VerticalScroll)
@@ -226,9 +225,13 @@ class PagedDocScreen(ModalScreen[None], inherit_bindings=False):
     # ---------- 状态 ----------
 
     def _set_header(self, pages: int, page: int | None = None) -> None:
-        position = f"{page}/{pages} 页" if page else f"{pages} 页"
-        self._header_text = (
-            f"{self._relative} · LaTeX 排版 · {position} · Esc 返回 · r 重渲染"
+        position = (
+            t("page.header_position", page=page, pages=pages)
+            if page
+            else t("page.header_total", pages=pages)
+        )
+        self._header_text = t(
+            "page.header", name=self._relative, position=position
         )
         self.query_one(f"#{HEADER_ID}", Static).update(self._header_text)
 
@@ -264,7 +267,7 @@ class PagedDocScreen(ModalScreen[None], inherit_bindings=False):
         self._spec = spec
         if self._timer is not None:
             self._timer.stop()
-        self._set_status("尺寸变了，重新排版…")
+        self._set_status(t("page.resize"))
         self._timer = self.set_timer(RESIZE_DEBOUNCE, self._load)
 
     def on_update_scroll(self, message) -> None:  # noqa: ARG002 —— 只跟位置

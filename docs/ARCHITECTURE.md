@@ -27,9 +27,10 @@ Textual owns layout, focus, input routing and the preview layers.
 
 | Module | Responsibility |
 |---|---|
-| `cli.py` | argparse, instance identity, lock file + takeover protocol, `--root/--shell/--scrollback`, `ls` / `attach` / `stop` wiring, layout file paths |
+| `cli.py` | argparse, instance identity, lock file + takeover protocol, `--root/--shell/--scrollback/--lang`, `ls` / `attach` / `stop` wiring, layout file paths |
 | `instances.py` | instance discovery and lifecycle: lock probing, `ls` table/JSON, attach/stop target resolution, cooperative shutdown marks |
 | `tmux_backend.py` | every tmux invocation: session creation, pane split/close/respawn, `capture-pane`, `send-keys`, `paste-buffer`, resize, `set-clipboard` |
+| `i18n.py` / `locales/` | UI language resolution (`--lang` > `MYRTUI_LANG` > `config.json` > locale > `en`), flat `key -> text` catalogs, `t()` with `en` fallback; no Textual import, no module-level `t()` |
 | `layout_state.py` | splitter ratios: `0..1` per dimension, atomic JSON write, format version 2, corrupt file → defaults |
 | `gitlog.py` / `gitstat.py` | `git log` (repo-wide and `--follow` per file) and `git status --porcelain -z -uall` parsing, in worker threads |
 | `fileview.py` | decoding a preview (UTF-8-SIG → UTF-8 → locale → replace), size/line limits, binary detection |

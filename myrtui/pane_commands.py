@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
+from myrtui.i18n import t
+
 MARKDOWN_SUFFIXES = frozenset({".md", ".markdown", ".mdown", ".mkd"})
 IMAGE_SUFFIXES = frozenset(
     {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".ico", ".avif"}
@@ -76,11 +78,11 @@ def is_image(path: str | os.PathLike[str]) -> bool:
 
 def _bad_path_reason(path: str) -> str | None:
     if not path:
-        return "文件路径为空"
+        return t("pane.empty_path")
     for char in path:
         code = ord(char)
         if char in "\r\n" or code < 0x20 or code == 0x7F:
-            return "路径包含换行或控制字符，未执行"
+            return t("pane.control_chars")
     return None
 
 
@@ -92,16 +94,16 @@ def _file_problem(path: str) -> str | None:
     target = Path(path)
     try:
         if not target.is_file():
-            return "文件不存在或不是普通文件"
+            return t("pane.not_a_file")
     except OSError as exc:
-        return f"无法读取文件：{exc}"
+        return t("pane.read_failed", exc=exc)
     try:
         with target.open("rb") as handle:
             probe = handle.read(BINARY_SNIFF_BYTES)
     except OSError as exc:
-        return f"无法读取文件：{exc}"
+        return t("pane.read_failed", exc=exc)
     if b"\0" in probe:
-        return "二进制文件，未打开"
+        return t("pane.binary")
     return None
 
 
@@ -208,7 +210,7 @@ def build_open(
         view = build_view(absolute, which=which)
         return CommandPlan(
             view.command,
-            view.notice or "未找到编辑器，已改用查看器打开",
+            view.notice or t("pane.no_editor"),
         )
 
     argv = " ".join(shlex.quote(word) for word in spec.argv)
@@ -233,11 +235,11 @@ def build_view(path: str, *, which=None) -> CommandPlan:
     if cat:
         return CommandPlan(
             f"{shlex.quote(cat)} -- {quoted_path}",
-            "未找到分页器，已直接输出（不可翻页 / 搜索）",
+            t("pane.no_pager"),
         )
     return CommandPlan(
         f"cat -- {quoted_path}",
-        "未找到分页器 / cat，按 shell 内置 cat 输出",
+        t("pane.no_pager_cat"),
     )
 
 

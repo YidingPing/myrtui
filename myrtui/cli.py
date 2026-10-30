@@ -29,6 +29,8 @@ import time
 
 import platformdirs
 
+from myrtui.i18n import LANGUAGES, set_lang, t
+
 from myrtui.tmux_backend import (
     DEFAULT_HISTORY_LIMIT,
     TmuxError,
@@ -298,7 +300,7 @@ def acquire_lock_with_takeover(
                 pass
             now = time.monotonic()
             if now >= deadline:
-                raise TimeoutError(f"等锁超过 {timeout:.0f}s 未获让位")
+                raise TimeoutError(t("cli.lock_timeout", timeout=timeout))
             if now >= next_refresh:
                 write_takeover_marker(takeover_path)
                 next_refresh = now + refresh
@@ -343,36 +345,60 @@ def build_parser() -> argparse.ArgumentParser:
     """
     p = argparse.ArgumentParser(
         prog="myrtui",
-        description="面向单个项目的轻量终端复用器（Textual 前端 + tmux 后端）。",
-        epilog="子命令：ls（列出实例）、attach（接入实例）、stop（结束实例）；"
-               "也可写 myrtui list（ls 别名）。",
+        description=t("cli.description"),
+        epilog=t("cli.epilog"),
     )
     p.add_argument(
         "--version",
         action="version",
         version=f"myrtui {_version_string()}",
-        help="显示版本号后退出",
+        help=t("cli.version_help"),
     )
     p.add_argument(
         "--root",
         metavar="PATH",
-        help="项目根目录覆盖（默认当前目录；realpath 归一化后派生会话身份，"
-             "侧栏计数与 pane 起始 cwd 均以此为准）",
+        help=t("cli.root_help"),
     )
     p.add_argument(
         "--shell",
         metavar="PATH",
-        help="pane 的 shell（默认 $SHELL，退化到 /bin/zsh）；"
-             "对已存在会话只影响之后新建的 pane",
+        help=t("cli.shell_help"),
     )
     p.add_argument(
         "--scrollback",
         type=int,
         metavar="N",
-        help=f"历史深度 history-limit（默认 {DEFAULT_HISTORY_LIMIT}，"
-              f"范围 1..{MAX_SCROLLBACK}）；对已存在会话只影响之后新建的 window",
+        help=t("cli.scrollback_help", default=DEFAULT_HISTORY_LIMIT, max=MAX_SCROLLBACK),
+    )
+    p.add_argument(
+        "--lang",
+        choices=LANGUAGES,
+        help=t("cli.lang_help", langs=" / ".join(LANGUAGES)),
     )
     return p
+
+
+def _take_lang(argv: list[str]) -> list[str]:
+    """把 ``--lang`` 从 argv 里摘出来并生效。
+
+    子命令（``ls`` / ``attach`` / ``stop``）由各自的小解析器处理，它们不认识
+    ``--lang``；而语言必须在打印任何提示之前定下来，所以在预分发前统一摘掉。
+    """
+    rest: list[str] = []
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--lang" and i + 1 < len(argv):
+            set_lang(argv[i + 1])
+            i += 2
+            continue
+        if arg.startswith("--lang="):
+            set_lang(arg.split("=", 1)[1])
+            i += 1
+            continue
+        rest.append(arg)
+        i += 1
+    return rest
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -384,28 +410,31 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] in SUBCOMMANDS:
         from myrtui import instances
 
+        try:
+            argv = _take_lang(argv)
+        except ValueError as exc:  # --lang 取值不在 LANGUAGES
+            print(f"myrtui: {exc}", file=sys.stderr)
+            return 2
         return instances.run("ls" if argv[0] == "list" else argv[0], argv[1:])
 
     args = build_parser().parse_args(argv)
+    set_lang(args.lang)
 
     # 1. 启动参数校验（全部在抢锁/连 tmux 之前，fail fast）
     if args.root is not None and not os.path.isdir(args.root):
-        print(f"myrtui: --root 不是目录：{args.root}", file=sys.stderr)
+        print(t("cli.err_root", path=args.root), file=sys.stderr)
         return 1
     shell: str | None = None
     if args.shell is not None:
         shell = os.path.realpath(args.shell)
         if not os.path.isfile(shell) or not os.access(shell, os.X_OK):
-            print(
-                f"myrtui: --shell 不是可执行文件：{args.shell}", file=sys.stderr
-            )
+            print(t("cli.err_shell", path=args.shell), file=sys.stderr)
             return 1
     if args.scrollback is not None and not (
         1 <= args.scrollback <= MAX_SCROLLBACK
     ):
         print(
-            f"myrtui: --scrollback 必须在 1..{MAX_SCROLLBACK}（收到 "
-            f"{args.scrollback}）",
+            t("cli.err_scrollback", max=MAX_SCROLLBACK, value=args.scrollback),
             file=sys.stderr,
         )
         return 1
@@ -428,8 +457,7 @@ def main(argv: list[str] | None = None) -> int:
     except TimeoutError:
         # §9：P1 接管轮询超时后提示手动处理并退出
         print(
-            f"myrtui: 该目录已有 myrtui 实例在运行（{root}），"
-            f"且 {TAKEOVER_TIMEOUT:.0f}s 内未让位；请手动结束旧实例后重试。",
+            t("cli.err_busy", root=root, timeout=TAKEOVER_TIMEOUT),
             file=sys.stderr,
         )
         return 1

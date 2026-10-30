@@ -102,6 +102,7 @@ the full cheat sheet. Full tables: [docs/USAGE.md](docs/USAGE.md#key-bindings).
 
 | Variable | Meaning |
 |---|---|
+| `MYRTUI_LANG` | UI language: `en` (default) / `zh_CN`; `--lang` overrides it for one run |
 | `MYRTUI_EDITOR` | editor for "Open" (falls back to `$EDITOR` / `$VISUAL` / `micro` → `vim` → `vi`) |
 | `MYRTUI_IDLE_INTERVAL` | idle capture interval in seconds (default `0.15`, range `0.05–5.0`); raise it for background instances |
 | `MYRTUI_COPY_ON_SELECT` | auto-copy on drag release (default `1`; `0` keeps the selection for `Ctrl-a c`) |

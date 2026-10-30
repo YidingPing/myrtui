@@ -29,6 +29,8 @@ from __future__ import annotations
 from textual.reactive import Reactive, reactive
 from textual.widget import Widget
 
+from myrtui.i18n import t
+
 # 细线字形（box drawing，1 cell 宽）
 THIN_GLYPHS = {"vertical": "│", "horizontal": "─"}
 
@@ -67,7 +69,7 @@ class Separator(Widget):
         kwargs.setdefault("markup", False)  # 线是纯字符，别让 markup 解析器插手
         super().__init__(**kwargs)
         if orientation not in THIN_GLYPHS:
-            raise ValueError(f"未知方向: {orientation!r}")
+            raise ValueError(t("separator.unknown_orientation", orientation=orientation))
         self.orientation = orientation
         self.add_class("-horizontal" if orientation == "horizontal" else "-vertical")
 

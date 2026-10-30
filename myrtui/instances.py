@@ -27,6 +27,7 @@ import time
 from dataclasses import dataclass
 
 from myrtui import cli
+from myrtui.i18n import t
 from myrtui.tmux_backend import (
     TmuxBackend,
     TmuxError,
@@ -122,23 +123,23 @@ def _resolve(
     - 其余 → hash 前缀匹配（不区分大小写）；
     - 命中但已 dead → 「无存活实例」（评审 M1）；多命中 → 歧义（退出 2）。
     """
-    not_found = f"myrtui: 未找到匹配的实例：{spec}"
-    dead_msg = f"myrtui: 该实例已结束（无存活实例）：{spec}"
+    not_found = t("inst.not_found", spec=spec)
+    dead_msg = t("inst.dead", spec=spec)
 
     if spec.isdigit():
         idx = int(spec)
         if idx < 1 or idx > len(alive):
-            span = f"1..{len(alive)}" if alive else "无存活实例"
-            return None, f"myrtui: 序号 {idx} 超出范围（{span}）。", 2
+            span = f"1..{len(alive)}" if alive else t("inst.no_alive_short")
+            return None, t("inst.out_of_range", idx=idx, span=span), 2
         return alive[idx - 1], None, 0
 
     if os.path.isdir(spec):
         root, digest = cli.derive_identity(spec)
         m = [i for i in insts if i.digest == digest]
         if not m:
-            return None, f"myrtui: 该目录没有 myrtui 实例记录：{root}", 2
+            return None, t("inst.no_record", root=root), 2
         if not m[0].alive:
-            return None, f"myrtui: 该实例已结束（无存活实例）：{root}", 2
+            return None, t("inst.dead", spec=root), 2
         return m[0], None, 0
 
     pre = spec.lower()
@@ -152,7 +153,7 @@ def _resolve(
         digests = ", ".join(i.digest for i in a)
         return (
             None,
-            f"myrtui: 哈希前缀匹配到多个实例：{digests}；请用更长前缀或序号。",
+            t("inst.ambiguous", digests=digests),
             2,
         )
     return a[0], None, 0
@@ -181,7 +182,7 @@ def _print_table(rows: list[dict]) -> None:
     for r in rows:
         idx = str(r["index"]) if r["index"] is not None else "-"
         pid = str(r["pid"]) if r["pid"] is not None else "-"
-        root = r["root"] or "(旧格式记录)"
+        root = r["root"] or t("inst.old_record")
         print(f"{idx:>3}  {r['state']:<8} {pid:>7}  {root}  {r['short_hash']}")
 
 
@@ -204,18 +205,18 @@ def _check_tmux_or_exit() -> int:
 def cmd_ls(argv: list[str]) -> int:
     p = argparse.ArgumentParser(
         prog="myrtui ls",
-        description="列出本用户的 myrtui 实例（默认只显示存活实例）。",
+        description=t("inst.ls_desc"),
     )
     p.add_argument(
         "--all",
         action="store_true",
-        help="同时显示 dead 残留（只有锁文件、无会话）；dead 行不占序号",
+        help=t("inst.ls_all_help"),
     )
     p.add_argument(
         "--json",
         action="store_true",
         dest="json_out",
-        help="JSON 输出；字段：index / state / root / short_hash / pid",
+        help=t("inst.ls_json_help"),
     )
     a = p.parse_args(argv)
 
@@ -236,11 +237,11 @@ def cmd_ls(argv: list[str]) -> int:
         return 0
     if not rows:
         if insts and not alive:
-            print(f"无存活实例（{len(insts)} 条 dead 残留，--all 查看）。")
+            print(t("inst.ls_empty_dead", n=len(insts)))
         elif insts:
-            print("无存活实例（--all 查看）。")
+            print(t("inst.ls_empty"))
         else:
-            print("无 myrtui 实例。")
+            print(t("inst.ls_none"))
         return 0
     _print_table(rows)
     return 0
@@ -252,13 +253,10 @@ def cmd_ls(argv: list[str]) -> int:
 def cmd_attach(argv: list[str]) -> int:
     p = argparse.ArgumentParser(
         prog="myrtui attach",
-        description="接入已有实例。对 running 实例 = 触发接管让位"
-                    "（原终端前端将退出，不是共享 attach）。",
-        epilog="目标：纯数字序号（myrtui ls 当次输出）、hash 前缀或项目"
-               "路径；纯数字一律按序号解释。省略目标且仅一个存活实例时"
-               "直接接入。",
+        description=t("inst.attach_desc"),
+        epilog=t("inst.target_epilog"),
     )
-    p.add_argument("target", nargs="?", help="序号 / hash 前缀 / 项目路径")
+    p.add_argument("target", nargs="?", help=t("inst.target_metavar"))
     a = p.parse_args(argv)
 
     rc = _check_tmux_or_exit()
@@ -270,12 +268,12 @@ def cmd_attach(argv: list[str]) -> int:
 
     if a.target is None:
         if not alive:
-            print("myrtui: 无存活实例。", file=sys.stderr)
+            print(t("inst.no_alive"), file=sys.stderr)
             return 2
         if len(alive) > 1:
             _print_table(_alive_rows(alive))
             print(
-                "myrtui: 有多个存活实例，请指定目标（序号 / hash 前缀 / 路径）。",
+                t("inst.multiple"),
                 file=sys.stderr,
             )
             return 2
@@ -290,8 +288,7 @@ def cmd_attach(argv: list[str]) -> int:
     if chosen.root is None:
         # 旧格式锁（无 root 行）：attach 需要项目路径，stop 不需要
         print(
-            f"myrtui: 该实例记录缺少项目路径（旧格式锁），无法 attach："
-            f"{chosen.digest}；可用 myrtui stop {chosen.digest} 结束它。",
+            t("inst.old_lock", digest=chosen.digest),
             file=sys.stderr,
         )
         return 2
@@ -356,8 +353,7 @@ def _stop_instance(inst: Instance) -> int:
                 pass
             if time.monotonic() >= deadline:
                 print(
-                    f"myrtui: 等待前台退出超时（{wait:.1f}s）；"
-                    f"实例可能未响应 stop 标记，请手动处理：{inst.digest}",
+                    t("inst.stop_timeout", wait=wait, digest=inst.digest),
                     file=sys.stderr,
                 )
                 _drop_own_stop(stop_path)
@@ -369,8 +365,7 @@ def _stop_instance(inst: Instance) -> int:
             lock_path, base_pid, base_root
         ):
             print(
-                "myrtui: 目标已被新的前台接管，放弃 stop"
-                "（未结束会话）。如确需停止请重试。",
+                t("inst.stop_taken_over"),
                 file=sys.stderr,
             )
             _drop_own_stop(stop_path)
@@ -389,12 +384,10 @@ def _stop_instance(inst: Instance) -> int:
 def cmd_stop(argv: list[str]) -> int:
     p = argparse.ArgumentParser(
         prog="myrtui stop",
-        description="结束实例：请前台干净退场后 kill tmux 会话（无 pid kill）。"
-                    "必须显式指定目标。",
-        epilog="目标：纯数字序号（myrtui ls 当次输出）、hash 前缀或项目"
-               "路径；纯数字一律按序号解释。",
+        description=t("inst.stop_desc"),
+        epilog=t("inst.target_epilog_stop"),
     )
-    p.add_argument("target", help="序号 / hash 前缀 / 项目路径（必填）")
+    p.add_argument("target", help=t("inst.target_required"))
     a = p.parse_args(argv)
 
     rc = _check_tmux_or_exit()
@@ -422,4 +415,4 @@ def run(cmd: str, argv: list[str]) -> int:
         return cmd_attach(argv)
     if cmd == "stop":
         return cmd_stop(argv)
-    raise ValueError(f"未知实例管理命令：{cmd}")
+    raise ValueError(t("inst.unknown_cmd", cmd=cmd))

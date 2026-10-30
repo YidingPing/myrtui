@@ -16,6 +16,8 @@ import subprocess
 import uuid
 from dataclasses import dataclass
 
+from myrtui.i18n import t
+
 log = logging.getLogger("myrtui.tmux")
 
 # 版本下限：capture-pane -N 为 3.1 新增（M4）
@@ -96,18 +98,13 @@ def check_tmux(tmux_bin: str = "tmux") -> tuple[int, int] | None:
             timeout=10,
         )
     except FileNotFoundError:
-        raise TmuxNotFoundError(
-            "tmux 未安装。macOS: `brew install tmux`；Linux: `apt install tmux`。"
-        ) from None
+        raise TmuxNotFoundError(t("tmux.not_installed")) from None
     version = parse_tmux_version(proc.stdout)
     if version is None:
         log.warning("无法解析 tmux 版本（%r），放行", proc.stdout.strip())
         return None
     if version < MIN_TMUX_VERSION:
-        raise TmuxError(
-            f"tmux 版本过低（{proc.stdout.strip()}），需要 >= 3.1"
-            "（capture-pane -N 为 3.1 新增）。请升级后重试。"
-        )
+        raise TmuxError(t("tmux.too_old", version=proc.stdout.strip()))
     return version
 
 
@@ -142,8 +139,12 @@ class TmuxBackend:
         )
         if check and proc.returncode != 0:
             raise TmuxError(
-                f"tmux {' '.join(args[:3])}... 失败（exit={proc.returncode}）: "
-                f"{proc.stderr.strip()}"
+                t(
+                    "tmux.command_failed",
+                    args=" ".join(args[:3]),
+                    code=proc.returncode,
+                    stderr=proc.stderr.strip(),
+                )
             )
         return proc
 

@@ -22,6 +22,8 @@ from urllib.parse import unquote, urlparse
 
 from markdown_it import MarkdownIt
 
+from myrtui.i18n import t
+
 log = logging.getLogger("myrtui.imageprep")
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -90,14 +92,14 @@ def resolve_image(src: str, base_dir: str | Path) -> tuple[Path | None, str | No
     """``src`` → 本地路径；拒绝远程 / 不存在 / 非普通文件。"""
     raw = (src or "").strip()
     if not raw:
-        return None, "图片路径为空"
+        return None, t("img.empty_path")
 
     parsed = urlparse(raw)
     if parsed.scheme:
         if parsed.scheme.lower() in REMOTE_SCHEMES:
-            return None, "不加载远程图片"
+            return None, t("img.remote")
         if parsed.scheme.lower() != "file":
-            return None, f"不支持的图片协议：{parsed.scheme}"
+            return None, t("img.unsupported_scheme", scheme=parsed.scheme)
         raw = unquote(parsed.path)
 
     candidate = Path(raw)
@@ -106,18 +108,18 @@ def resolve_image(src: str, base_dir: str | Path) -> tuple[Path | None, str | No
     try:
         candidate = candidate.resolve()
     except OSError:
-        return None, "图片路径无法解析"
+        return None, t("img.unresolvable")
 
     try:
         stat = candidate.stat()
     except OSError:
-        return None, "图片不存在"
+        return None, t("img.missing")
     if not candidate.is_file():
-        return None, "不是普通文件"
+        return None, t("img.not_regular")
     if stat.st_size <= 0:
-        return None, "图片为空"
+        return None, t("img.empty")
     if stat.st_size > MAX_IMAGE_BYTES:
-        return None, "图片过大（>10 MB）"
+        return None, t("img.too_large")
     return candidate, None
 
 
@@ -151,7 +153,7 @@ def prepare_one(
     try:
         from PIL import Image  # noqa: PLC0415 —— 可选依赖
     except Exception:  # noqa: BLE001
-        return Prepared(source=src, alt=alt or src, note="未安装 Pillow")
+        return Prepared(source=src, alt=alt or src, note=t("img.no_pillow"))
 
     try:
         from PIL import ImageOps  # noqa: PLC0415 —— 可选依赖
@@ -159,14 +161,14 @@ def prepare_one(
         with Image.open(path) as raw:
             raw.load()
             if raw.width * raw.height > MAX_IMAGE_PIXELS * MAX_IMAGE_PIXELS:
-                return Prepared(source=src, alt=alt or src, note="图片像素过大")
+                return Prepared(source=src, alt=alt or src, note=t("img.too_many_pixels"))
             format_name = (raw.format or "").upper()
             # 手机照片常靠 EXIF 方向标记；不校正会横躺 / 倒置。
             image = ImageOps.exif_transpose(raw).convert("RGBA")
             original_size = image.size
     except Exception:  # noqa: BLE001 —— 坏文件 / 不支持的格式
         log.debug("图片解码失败：%s", path, exc_info=True)
-        return Prepared(source=src, alt=alt or src, note="图片无法解码")
+        return Prepared(source=src, alt=alt or src, note=t("img.decode_failed"))
 
     target_w = max(1, min(int(max_width_px), image.width))
     target_h = max(1, int(max_height_px))
@@ -227,5 +229,5 @@ def prepare_document(
             )
         except Exception:  # noqa: BLE001 —— D5：单图失败只影响该条
             log.debug("图片准备失败：%s", src, exc_info=True)
-            prepared[src] = Prepared(source=src, alt=alt or src, note="图片准备失败")
+            prepared[src] = Prepared(source=src, alt=alt or src, note=t("img.prepare_failed"))
     return prepared

@@ -26,6 +26,8 @@ import sys
 from dataclasses import dataclass
 from typing import Callable
 
+from myrtui.i18n import t
+
 log = logging.getLogger("myrtui.graphics")
 
 ENV_NAME = "MYRTUI_GRAPHICS"
@@ -89,7 +91,7 @@ def _load_probe() -> Callable[[], object] | None:
 def _normalize_mode(raw: str | None) -> tuple[str, str | None]:
     mode = (raw or "").strip().lower() or "auto"
     if mode not in MODES:
-        warning = f"{ENV_NAME}={raw!r} 非法，已回落 auto"
+        warning = t("gfx.mode_invalid", env=ENV_NAME, raw=raw)
         log.warning(warning)
         return "auto", warning
     return mode, None
@@ -152,9 +154,9 @@ def detect(
             # （不刷启动告警），显式要求 sixel/tgp 才 log.warning。
             forced = mode in ("sixel", "tgp")
             warning = warning or (
-                f"{ENV_NAME}={mode}，但未安装 textual-image，位图不可用"
+                t("gfx.forced_missing_dep", env=ENV_NAME, mode=mode)
                 if forced
-                else "未安装 textual-image，预览位图关闭"
+                else t("gfx.missing_dep")
             )
             if forced:
                 log.warning(warning)
@@ -192,15 +194,11 @@ def detect(
     if mode == "sixel":
         sixel, tgp = sixel, False
         if not sixel:
-            warning = warning or (
-                f"{ENV_NAME}=sixel，但终端未报告 Sixel 支持，回落 Unicode"
-            )
+            warning = warning or t("gfx.sixel_unsupported", env=ENV_NAME)
     elif mode == "tgp":
         sixel, tgp = False, tgp
         if not tgp:
-            warning = warning or (
-                f"{ENV_NAME}=tgp，但终端未报告 TGP 支持，回落 Unicode"
-            )
+            warning = warning or t("gfx.tgp_unsupported", env=ENV_NAME)
 
     resolved = mode if (sixel or tgp) else "unicode"
     capabilities = Capabilities(
@@ -227,7 +225,7 @@ def describe(capabilities: Capabilities) -> str:
     if not capabilities.bitmaps:
         text = f"graphics={capabilities.mode}"
         if capabilities.mode != "off" and not capabilities.available:
-            text += "（textual-image 缺失）"
+            text += t("gfx.missing_dep_short")
         return text
     return (
         f"graphics={capabilities.protocol} "
@@ -247,7 +245,7 @@ def blocked_reason(capabilities: Capabilities, env: str | None = None) -> str:
     raw = os.environ.get(ENV_NAME) if env is None else env
     mode = (raw or "").strip().lower() or "auto"
     if mode in ("off", "unicode"):
-        return f"位图已被 {ENV_NAME}={mode} 关闭；设为 auto 后重开预览"
+        return t("gfx.mode_off", env=ENV_NAME, mode=mode)
     if not capabilities.available:
-        return f"缺位图依赖 textual-image/Pillow：{INSTALL_HINT}（需 Python ≥3.12）"
-    return "当前终端没有 Sixel/TGP 位图协议，LaTeX 排版不可用"
+        return t("gfx.missing_dep_long", hint=INSTALL_HINT)
+    return t("gfx.no_protocol")

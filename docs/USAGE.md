@@ -60,6 +60,7 @@ myrtui
 | `--root PATH` | project root override (realpath → identity / lock / socket / sidebar) |
 | `--shell PATH` | shell for new panes (default `$SHELL`, then `/bin/zsh`) |
 | `--scrollback N` | tmux `history-limit` (default 5000, range 1..1000000) |
+| `--lang {en,zh_CN}` | UI language for this run (overrides `MYRTUI_LANG` / config / locale) |
 
 `--shell` and `--scrollback` only affect **panes created afterwards**: tmux
 snapshots the options when a pane/window is created, and `Ctrl-a r` replays the
@@ -299,6 +300,7 @@ you can see what was copied.
 
 | Variable | Default | Meaning |
 |---|---|---|
+| `MYRTUI_LANG` | `en` | UI language: `en` / `zh_CN`. Also read from `config.json`'s `lang` and from a `zh*` locale; `--lang` wins for one run |
 | `MYRTUI_EDITOR` | — | editor for "Open" (see resolution order above) |
 | `MYRTUI_IDLE_INTERVAL` | `0.15` | idle capture interval in seconds (clamped to `0.05–5.0`); raise it for secondary instances (`MYRTUI_IDLE_INTERVAL=0.5 myrtui`) |
 | `MYRTUI_COPY_ON_SELECT` | `1` | auto-copy on drag release (`0/false/no/off` disables) |

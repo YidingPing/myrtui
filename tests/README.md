@@ -1,5 +1,16 @@
 # myrtui 测试说明
 
+## UI 语言
+
+`tests/conftest.py` 的 autouse 夹具把 `MYRTUI_LANG` 钉成 `zh_CN`，并把
+`MYRTUI_CONFIG` 指到临时路径：存量里 295 条含汉字的断言（33 条逐字命中 UI 文案）
+因此零改动继续通过，开发机的 `LANG` / `config.json` 也不会让语义漂移。
+
+- 新断言对文案请用 `t("key")`，或直接断言 id / 状态；**不要再写死中文字面量**。
+- 语言探测类用例打 `@pytest.mark.no_lang_pin`（夹具就不设 `MYRTUI_LANG`）。
+- `tests/test_i18n.py` 另有 AST 守卫：源码里出现未经 `t()` 的汉字、或模块级
+  调用 `t()`，都会红。
+
 ## 运行
 
 ```sh

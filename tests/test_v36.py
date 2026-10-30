@@ -698,6 +698,11 @@ def test_binary_and_missing_show_message(tmp_path):
 
 
 def test_sidebar_shortcut_text_is_synced():
-    sidebar = next(section for section in SECTIONS if section.title == "侧栏")
-    row = next(row for row in sidebar.rows if row.keys == "右键")
-    assert row.desc == "打开 / 预览 / 复制路径"
+    """侧栏「右键」一行的键位与说明仍在表里（按 id 定位，不拿文案当地址）。"""
+    from myrtui.i18n import t
+
+    sidebar = next(section for section in SECTIONS if section.id == "sidebar")
+    row = next(row for row in sidebar.rows if row.keys_key == "help.key.right_click")
+    assert row.desc_key == "help.right_click"
+    # conftest 把语言钉成 zh_CN，这里顺带锁住中文措辞没漂
+    assert t(row.desc_key) == "打开 / 预览 / 复制路径"

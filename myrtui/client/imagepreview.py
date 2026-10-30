@@ -36,6 +36,7 @@ from myrtui.client.mdpreview import (
     _image_widget_class,
     _make_image_widget,
 )
+from myrtui.i18n import t
 
 log = logging.getLogger("myrtui.imagepreview")
 
@@ -44,7 +45,6 @@ SCROLL_ID = "imagepreview-scroll"
 PLACEHOLDER_ID = "imagepreview-placeholder"
 FOOTER_ID = "imagepreview-footer"
 
-FOOTER = "Esc 返回 · ←/→ 切换 · r 重载 · ↑↓/PgUp/PgDn 滚动"
 RESIZE_DEBOUNCE = 0.4
 
 
@@ -105,7 +105,7 @@ def load_image(
     try:
         size = target.stat().st_size
     except OSError as exc:
-        return LoadedImage(None, error=f"无法读取：{exc.strerror or exc}")
+        return LoadedImage(None, error=t("img.read_failed", reason=exc.strerror or exc))
     prepared = imageprep.prepare_one(
         str(target),
         target.name,
@@ -116,7 +116,7 @@ def load_image(
         cell=cell,
     )
     if not prepared.ok:
-        return LoadedImage(prepared, size=size, error=prepared.note or "图片无法解码")
+        return LoadedImage(prepared, size=size, error=prepared.note or t("img.decode_failed"))
     return LoadedImage(prepared, size=size)
 
 
@@ -201,8 +201,8 @@ class ImagePreviewScreen(ModalScreen[str | None], inherit_bindings=False):
     def compose(self) -> ComposeResult:
         yield Static(self._relative, id=HEADER_ID, markup=False)
         with VerticalScroll(id=SCROLL_ID):
-            yield Static("加载中…", id=PLACEHOLDER_ID, markup=False)
-        yield Static(FOOTER, id=FOOTER_ID, markup=False)
+            yield Static(t("img.loading"), id=PLACEHOLDER_ID, markup=False)
+        yield Static(t("img.footer"), id=FOOTER_ID, markup=False)
 
     def on_mount(self) -> None:
         self.query_one(f"#{SCROLL_ID}", VerticalScroll).focus()
@@ -259,16 +259,16 @@ class ImagePreviewScreen(ModalScreen[str | None], inherit_bindings=False):
             )
         except Exception:  # noqa: BLE001 —— 解码是增强，失败只显示提示
             log.debug("图片预览加载失败", exc_info=True)
-            loaded = LoadedImage(None, error="图片读取失败")
+            loaded = LoadedImage(None, error=t("img.load_failed"))
         if not self._alive():
             return
         self._absolute = str(target)
         self._update_header(loaded)
         if loaded.error is not None or loaded.prepared is None or not loaded.prepared.ok:
-            await self._show_status_async(loaded.error or "图片无法解码")
+            await self._show_status_async(loaded.error or t("img.decode_failed"))
             return
         await self._mount_image(loaded.prepared, width_cells, height_cells, colors[1])
-        self._set_footer(FOOTER)
+        self._set_footer(t("img.footer"))
 
     async def _mount_image(
         self,
@@ -305,7 +305,7 @@ class ImagePreviewScreen(ModalScreen[str | None], inherit_bindings=False):
             container.scroll_home(animate=False)
         except Exception:  # noqa: BLE001 —— 控件构造失败只显示元信息
             log.debug("图片控件构造失败", exc_info=True)
-            await self._show_status_async("图片控件构造失败")
+            await self._show_status_async(t("img.widget_failed"))
 
     def _viewport(self) -> tuple[int, int] | None:
         try:
@@ -359,7 +359,7 @@ class ImagePreviewScreen(ModalScreen[str | None], inherit_bindings=False):
     def _show_loading(self) -> None:
         """只在占位还在时写“加载中…”，已挂上图片就保持原图（不闪）。"""
         try:
-            self.query_one(f"#{PLACEHOLDER_ID}", Static).update("加载中…")
+            self.query_one(f"#{PLACEHOLDER_ID}", Static).update(t("img.loading"))
         except Exception:  # noqa: BLE001 —— 图片已挂载 / 卸载竞态
             pass
 
@@ -367,7 +367,7 @@ class ImagePreviewScreen(ModalScreen[str | None], inherit_bindings=False):
         container = self.query_one(f"#{SCROLL_ID}", VerticalScroll)
         await container.remove_children()
         await container.mount(Static(message, markup=False))
-        self._set_footer(FOOTER)
+        self._set_footer(t("img.footer"))
 
     def _set_footer(self, text: str) -> None:
         try:

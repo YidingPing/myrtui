@@ -29,6 +29,7 @@ from collections import OrderedDict
 from typing import Protocol
 
 from myrtui.client.mathtext import MathText, is_probably_math, math_parser_factory
+from myrtui.i18n import t
 
 log = logging.getLogger("myrtui.mathrender")
 
@@ -263,11 +264,11 @@ class TermtexRenderer:
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
-            raise MathRenderError(f"termtex 超时（{self._timeout}s）") from exc
+            raise MathRenderError(t("math.termtex_timeout", timeout=self._timeout)) from exc
         if completed.returncode != 0:
             detail = completed.stderr.decode("utf-8", "replace").strip()
             raise MathRenderError(
-                f"termtex 退出码 {completed.returncode}: {detail[:200]}"
+                t("math.termtex_exit", code=completed.returncode, detail=detail[:200])
             )
         return completed.stdout.decode("utf-8", "replace")
 
@@ -276,7 +277,7 @@ class TermtexRenderer:
             self._run(normalize_source(latex), width=width)
         )
         if not text.strip():
-            raise MathRenderError("termtex 输出为空")
+            raise MathRenderError(t("math.termtex_empty"))
         return text
 
     def render_inline(self, latex: str) -> str:
@@ -284,7 +285,7 @@ class TermtexRenderer:
         # 行内永不出多行：逐行 strip 后用单个空格合并（plan §2.1）。
         merged = " ".join(part.strip() for part in text.split("\n") if part.strip())
         if not merged:
-            raise MathRenderError("termtex -inline 输出为空")
+            raise MathRenderError(t("math.termtex_empty_inline"))
         return merged
 
 
@@ -355,7 +356,7 @@ def select_backend(env: str | None = None) -> tuple[MathRenderer, str | None]:
     mode = (raw or "").strip().lower()
     warning: str | None = None
     if mode not in ("", "auto", "plain", "builtin", "termtex"):
-        warning = f"{ENV_NAME}={raw!r} 非法，已回落 auto"
+        warning = t("math.backend_invalid", env=ENV_NAME, raw=raw)
         log.warning(warning)
         mode = "auto"
     if mode == "":
@@ -368,10 +369,7 @@ def select_backend(env: str | None = None) -> tuple[MathRenderer, str | None]:
     if renderer is not None:
         return renderer, warning
     if mode == "termtex":
-        warning = warning or (
-            f"{ENV_NAME}=termtex，但未找到可用的 termtex，"
-            "公式将显示 LaTeX 原文"
-        )
+        warning = warning or t("math.termtex_missing", env=ENV_NAME)
         log.warning(warning)
     return PlainRenderer(), warning
 

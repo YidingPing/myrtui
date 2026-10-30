@@ -88,6 +88,7 @@ myrtui                  # 或 uv run myrtui
 myrtui --root /path/to/proj    # 项目根覆盖（先 realpath 再派生身份/锁/socket/侧栏）
 myrtui --shell /bin/fish       # pane 的 shell（默认 $SHELL，退化到 /bin/zsh）
 myrtui --scrollback 20000      # 历史深度 history-limit（默认 5000，范围 1..1000000）
+myrtui --lang zh_CN            # 本次运行的界面语言（默认 en；也可写进 MYRTUI_LANG）
 ```
 
 `--shell` / `--scrollback` 对**已存在的会话只影响之后新建的 pane**（tmux 在
@@ -98,6 +99,7 @@ window/pane 创建时快照选项，`Ctrl-a r` 重开的也是建窗时记录的
 
 | 变量 | 作用 |
 |---|---|
+| `MYRTUI_LANG` | 界面语言：`en`（默认）/ `zh_CN`。优先级：`--lang` > `MYRTUI_LANG` > `config.json` 的 `lang` > `LC_ALL`/`LANG` 是否 `zh*` > `en`；改完重启生效。 |
 | `MYRTUI_IDLE_INTERVAL` | 空闲轮询间隔（秒，float，默认 `0.15`；非法/非正值回落默认，合法值夹取 `0.05–5.0`）。多实例时给**后台/次要实例**降频：`MYRTUI_IDLE_INTERVAL=0.5 myrtui`（空闲抓屏 6.7 → 2 次/s，系统级 fork 与 CPU 同降）。活跃实例保持默认即可。 |
 | `MYRTUI_LOOP_DEBUG` | `=1` 时把事件循环迟到 > 30ms 的事件写到 stderr（性能遥测，排障/验收用，默认关闭、无行为影响）。 |
 | `MYRTUI_MOUSE_DEBUG` | `=1` 时把每个鼠标事件与拖拽结论写进 `<tmp>/myrtui-mouse-debug-<pid>.log`（排障用，默认关闭）。 |

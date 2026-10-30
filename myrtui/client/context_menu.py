@@ -59,7 +59,9 @@ class ContextMenuScreen(ModalScreen[str | None]):
     }
     """
 
-    BINDINGS = [Binding("escape", "cancel", "取消", show=False)]
+    # desc 不参与渲染（show=False），所以这里不调 t()——类体在 import 时求值，
+    # 模块级 t() 会把语言固化（见 myrtui/i18n.py 头注释）。
+    BINDINGS = [Binding("escape", "cancel", "", show=False)]
 
     def __init__(self, items: list[tuple[str, str]], x: int, y: int, **kwargs):
         super().__init__(**kwargs)

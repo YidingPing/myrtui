@@ -96,6 +96,7 @@ myrtui                 # 首次运行创建会话，之后都是 attach
 
 | 变量 | 作用 |
 |---|---|
+| `MYRTUI_LANG` | 界面语言：`en`（默认）/ `zh_CN`；`--lang` 可单次覆盖 |
 | `MYRTUI_EDITOR` | 「打开」用的编辑器（否则 `$EDITOR` / `$VISUAL` / `micro` → `vim` → `vi`） |
 | `MYRTUI_IDLE_INTERVAL` | 空闲抓屏间隔，秒（默认 `0.15`，夹取 `0.05–5.0`）；后台实例可调大 |
 | `MYRTUI_COPY_ON_SELECT` | 拖拽松手自动复制（默认 `1`；`0` 时用 `Ctrl-a c` 手动复制） |

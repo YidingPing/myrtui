@@ -34,7 +34,7 @@ from myrtui.client.file_tree import FileTree
 from myrtui.client.git_panel import CommitCard, GitLogPanel
 from myrtui.client.pane_widget import PaneWidget, parse_sgr_line
 from myrtui.client.separators import DRAG_BUTTONS, Separator
-from myrtui.client.shortcuts import HELP_WIDTH, ShortcutHelp
+from myrtui.client.shortcuts import ShortcutHelp, help_width
 from myrtui.client.sidebar import Sidebar
 from myrtui.client.topbar import TopBar, TopBarButton, PaneTab
 from myrtui.mouse import (
@@ -46,6 +46,7 @@ from myrtui.mouse import (
     release,
     wheel,
 )
+from myrtui.i18n import t
 from myrtui.tmux_backend import CaptureResult, PaneInfo, TmuxBackend, TmuxError
 
 import os as _os
@@ -101,9 +102,9 @@ GESTURE_TIMEOUT = 30.0  # 手势安全超时：mouse-up 丢失时不永久冻结
 # v0.35：SSH 会话的粘贴提示。SSH 只转发 TERM 等少量环境变量，`TERM_PROGRAM`
 # / `WT_SESSION` 通常拿不到 → 无法判断外层客户端，并列给出三种常见按键，
 # 避免像 v0.35 初版那样只写 `Ctrl+Shift+V` 误导 macOS / Windows Terminal 用户。
-SSH_PASTE_HINT = (
-    "SSH 粘贴：macOS Cmd+V · Windows Terminal Ctrl+V · Tabby Ctrl+Shift+V"
-)
+def ssh_paste_hint() -> str:
+    """SSH 会话的粘贴按键提示（渲染时求值：模块级 t() 会固化语言）。"""
+    return t("app.ssh_paste_hint")
 MOTION_INTERVAL = 0.03  # v0.7 鼠标 motion 节流：≥30ms 一条（1003 hover 下
 # 每次移动一次 exec 不可承受 → 尾部合并，只保留最新位置）
 GITLOG_INTERVAL = 3.0  # P3：当前目标的 git log 刷新节奏（D7：3s 足够及时，
@@ -781,7 +782,7 @@ class TerminalApp(App, inherit_bindings=False):
         self._submit_job(
             self._topology_fetch,
             apply=self._topology_apply,
-            label="list-panes 失败",
+            label=t("app.job.list_panes"),
         )
 
     # ---------- B1：单线程串行执行器（PERF-B0B1-PLAN §3.1） ----------
@@ -791,7 +792,7 @@ class TerminalApp(App, inherit_bindings=False):
         fetch,
         *,
         apply=None,
-        label: str = "backend 调用",
+        label: str | None = None,
         on_error=None,
     ):
         """提交「线程段 fetch → 循环段 apply」的串行 job，入队即返。
@@ -812,6 +813,8 @@ class TerminalApp(App, inherit_bindings=False):
         """
         if self._executor_closed:
             return None
+        # 标签只进日志；默认值在这里求值（写成默认参数会在 import 时固化语言）
+        label = label or t("app.job.backend")
         loop = asyncio.get_running_loop()
         fut = loop.run_in_executor(self._executor, fetch)
         fut.add_done_callback(
@@ -1293,23 +1296,23 @@ class TerminalApp(App, inherit_bindings=False):
             if pane_commands.is_image(event.absolute):
                 # 图片是二进制：拿编辑器打开只会显示乱码，查看器（ov/less/cat）
                 # 同理，所以这里只留应用内预览 + 两种复制（v0.4.3）。
-                items.append(("image", "预览图片"))
+                items.append(("image", t("menu.image_preview")))
             else:
                 # v0.31：菜单直接显示当前解析到的工具，用户一眼知道会调起什么；
                 # 没有编辑器时退回只读查看器（ov / less / cat）。
                 editor = pane_commands.resolve_editor()
                 if editor is None:
                     items.append(
-                        ("view", f"查看（{pane_commands.viewer_name()}）")
+                        ("view", t("menu.view", tool=pane_commands.viewer_name()))
                     )
                 else:
-                    items.append(("view", f"打开（{editor.name}）"))
+                    items.append(("view", t("menu.open", editor=editor.name)))
                 if pane_commands.is_markdown(event.absolute):
-                    items.append(("preview", "预览 Markdown"))
+                    items.append(("preview", t("menu.preview_markdown")))
         else:
-            items.append(("refresh_dir", "刷新此目录"))
-        items.append(("copy_rel", "复制相对路径"))
-        items.append(("copy_abs", "复制绝对路径"))
+            items.append(("refresh_dir", t("menu.refresh_dir")))
+        items.append(("copy_rel", t("menu.copy_rel")))
+        items.append(("copy_abs", t("menu.copy_abs")))
         self.push_screen(
             ContextMenuScreen(items, event.screen_x, event.screen_y),
             callback=lambda action: self._context_menu_closed(
@@ -1349,10 +1352,10 @@ class TerminalApp(App, inherit_bindings=False):
             self._focus_file_tree()
             return
         if action == "copy_abs":
-            self.copy_text(absolute, note="已复制路径")
+            self.copy_text(absolute, note=t("app.copied_path"))
         elif action == "copy_rel":
             # 根节点的相对路径是空串 → 复制 "."（git add . 等命令可直接用）
-            self.copy_text(path or ".", note="已复制相对路径")
+            self.copy_text(path or ".", note=t("app.copied_rel"))
         self._focus_file_tree()
 
     def _refresh_tree_dir(self, relative: str, absolute: str) -> None:
@@ -1373,13 +1376,13 @@ class TerminalApp(App, inherit_bindings=False):
                     relative.rsplit("/", 1)[0] if "/" in relative else ""
                 )
                 tree.reload_path(parent)
-                self._notify("目录已不存在，已刷新上级目录")
+                self._notify(t("app.dir_gone_parent"))
             else:
                 tree.reload()
-                self._notify("目录已不存在，已重载文件树")
+                self._notify(t("app.dir_gone_reload"))
             return
         if not tree.reload_path(relative):
-            self._notify("节点未找到，已重载文件树")
+            self._notify(t("app.node_missing"))
 
     def _focus_file_tree(self) -> None:
         """把焦点还给文件树（teardown / 侧栏已拆时静默；Esc / 菜单动作后共用）。"""
@@ -1426,7 +1429,7 @@ class TerminalApp(App, inherit_bindings=False):
         except OSError:
             size = None
         if size is not None and size > MARKDOWN_PREVIEW_MAX_BYTES:
-            self._notify("Markdown 过大（>512 KiB），请用「打开」")
+            self._notify(t("md.too_large"))
             self._focus_file_tree()
             return
         self.push_screen(
@@ -1468,15 +1471,15 @@ class TerminalApp(App, inherit_bindings=False):
     def _pane_problem(self, pane_id: str) -> str | None:
         """当前 pane 是否可接收打开命令；返回拒绝原因。"""
         if self._dead.get(pane_id):
-            return "当前 pane 已退出，Ctrl-a r 重开后重试"
+            return t("app.pane_dead")
         if self._alt_screens.get(pane_id):
-            return "当前 pane 正在运行全屏程序，先退出再打开"
+            return t("app.pane_alt")
         command = self._commands.get(pane_id)
         if not command:
-            return "当前 pane 状态未知，请稍后重试"
+            return t("app.pane_unknown")
         base = _os.path.basename(command).lstrip("-").lower()
         if base not in self._shell_names:
-            return f"当前 pane 正在运行 {command}，先退出到 shell 再打开"
+            return t("app.pane_running", command=command)
         return None
 
     def _open_in_pane(self, absolute: str) -> None:
@@ -1484,7 +1487,7 @@ class TerminalApp(App, inherit_bindings=False):
         self._hide_shortcut_help()
         pane = self._active_pane
         if pane is None:
-            self._notify("没有可用的 pane")
+            self._notify(t("app.no_pane"))
             self._focus_file_tree()
             return
         problem = self._pane_problem(pane)
@@ -1500,7 +1503,7 @@ class TerminalApp(App, inherit_bindings=False):
             return
         self._submit_job(
             lambda: self.backend.run_command(pane, plan.command),
-            label="打开命令发送失败",
+            label=t("app.job.open_send"),
         )
         self._offsets[pane] = 0
         self._burst()
@@ -1571,11 +1574,13 @@ class TerminalApp(App, inherit_bindings=False):
             # 但吞掉可免 teardown 期间的报错噪音。
             return
         if status == "not-repo":
-            panel.show_message("非 git 仓库")
+            panel.show_message(t("git.not_repo"))
         elif status == "unavailable":
-            panel.show_message("git 不可用")
+            panel.show_message(t("git.unavailable"))
         elif not commits:
-            panel.show_message("该文件暂无提交记录" if target else "当前分支暂无提交")
+            panel.show_message(
+                t("git.no_commits_file") if target else t("git.no_commits_branch")
+            )
         else:
             panel.show_commits(commits)
 
@@ -1936,12 +1941,10 @@ class TerminalApp(App, inherit_bindings=False):
         """
         topbar = self.query_one(TopBar)
         if self._disconnected:
-            topbar.set_status(
-                "与会话失去连接（tmux 会话未被自动终止），正在重连…"
-            )
+            topbar.set_status(t("app.disconnected"))
             return
         if time.monotonic() < self._reconnect_until:
-            topbar.set_status("已重新连接")
+            topbar.set_status(t("app.reconnected"))
             return
         if time.monotonic() < self._notice_until:
             topbar.set_status(self._notice_text)
@@ -1949,17 +1952,17 @@ class TerminalApp(App, inherit_bindings=False):
         dead = sum(1 for pid in self._pane_ids if self._dead.get(pid))
         if dead > 0:
             if dead >= len(self._pane_ids):
-                topbar.set_status("所有 shell 已退出：Ctrl-a r 重开，或 Ctrl-a k 结束会话")
+                topbar.set_status(t("app.all_dead"))
             else:
-                topbar.set_status(f"{dead} 个 pane 已退出（Ctrl-a r 重开）")
+                topbar.set_status(t("app.some_dead", count=dead))
             return
         if self._sidebar_focused():
             # 侧栏聚焦提示（D8：让「键归侧栏」的规则可见）；v0.22 起区分
             # 文件树 / Git 历史两个焦点目标，``Ctrl-a s`` / ``Ctrl-a g`` 对称
             if self._git_focused():
-                topbar.set_status("Git 历史已聚焦 · Esc 返回终端")
+                topbar.set_status(t("app.git_focused"))
             else:
-                topbar.set_status("侧栏已聚焦 · Esc 返回终端")
+                topbar.set_status(t("app.sidebar_focused"))
             return
         topbar.set_status("")
 
@@ -2101,7 +2104,7 @@ class TerminalApp(App, inherit_bindings=False):
         #（口径同旧 log.warning("鼠标注入失败")）。burst 语义 = 合并请求一次 poll
         self._submit_job(
             lambda: self.backend.send_mouse(pane_id, seq),
-            label="鼠标注入失败",
+            label=t("app.job.mouse"),
         )
         if burst:
             self._burst()  # 点击/滚轮/释放：立即 capture 看程序回显（§8）
@@ -2213,9 +2216,7 @@ class TerminalApp(App, inherit_bindings=False):
                 else:
                     self._hold_selection = True
                     self._schedule_thaw(HOLD_TIMEOUT)
-                    self._notify(
-                        f"已选中 {len(text)} 字符 · Ctrl-a c 复制 · 点击取消"
-                    )
+                    self._notify(t("app.selection", count=len(text)))
             else:
                 self._clear_screen_selection()
                 self._thaw_pane()
@@ -2525,7 +2526,7 @@ class TerminalApp(App, inherit_bindings=False):
                     self._last_size[pane_id] = prev_size
 
         submitted = self._submit_job(
-            fetch, apply=apply, label="resize-window 失败", on_error=rollback
+            fetch, apply=apply, label=t("app.job.resize"), on_error=rollback
         )
         if submitted is None:
             rollback(None)  # 执行器已关闭 → 立即回滚，防去重永久跳过
@@ -2559,7 +2560,7 @@ class TerminalApp(App, inherit_bindings=False):
             self._burst()
 
         # B1 §3.2-7：tmux 动作 + list-panes 在线程段，拓扑/焦点在循环段
-        self._submit_job(fetch, apply=apply, label="new-window 失败")
+        self._submit_job(fetch, apply=apply, label=t("app.job.new_window"))
 
     def action_close_pane(self) -> None:
         """Ctrl-a w：关闭当前 pane（kill-window）。
@@ -2588,7 +2589,7 @@ class TerminalApp(App, inherit_bindings=False):
                 self._topology_apply(panes)
             self._burst()
 
-        self._submit_job(fetch, apply=apply, label="kill-window 失败")
+        self._submit_job(fetch, apply=apply, label=t("app.job.kill_window"))
 
     def action_switch_pane(self, index: int) -> None:
         """Ctrl-a 1..4：按槽位切焦点；槽位不存在则忽略。"""
@@ -2631,7 +2632,7 @@ class TerminalApp(App, inherit_bindings=False):
         self._submit_job(
             lambda: self.backend.respawn_pane(pid),
             apply=apply,
-            label="respawn-pane 失败",
+            label=t("app.job.respawn"),
         )
 
     # ---------- 键盘（§10.1） ----------
@@ -2661,11 +2662,13 @@ class TerminalApp(App, inherit_bindings=False):
         #（口径同旧 log.warning("send 失败")）
         if kind == "text":
             self._submit_job(
-                lambda: self.backend.send_text(pane, value), label="send 失败"
+                lambda: self.backend.send_text(pane, value),
+                label=t("app.job.send"),
             )
         else:
             self._submit_job(
-                lambda: self.backend.send_keys(pane, value), label="send 失败"
+                lambda: self.backend.send_keys(pane, value),
+                label=t("app.job.send"),
             )
         # 上次输入任意键（除滚轮）→ 自动回实时尾部（§11）
         if self._offsets.get(pane, 0) != 0:
@@ -2682,7 +2685,8 @@ class TerminalApp(App, inherit_bindings=False):
             pane = self._input_target()
             if pane is not None:
                 self._submit_job(
-                    lambda: self.backend.send_ctrl_a(pane), label="send 失败"
+                    lambda: self.backend.send_ctrl_a(pane),
+                    label=t("app.job.send"),
                 )  # B1 §3.2-4：同 _forward_key（提交即返，FIFO 保序）
                 self._burst()
 
@@ -2769,7 +2773,8 @@ class TerminalApp(App, inherit_bindings=False):
         # B1 §3.2-8：paste（load-buffer + paste-buffer 两次子进程）提交即返，
         # 合并一次 poll；错误口径不变（记 warning）
         self._submit_job(
-            lambda: self.backend.paste(pane, event.text), label="paste 失败"
+            lambda: self.backend.paste(pane, event.text),
+            label=t("app.job.paste"),
         )  # load/paste-buffer 通道（B7）
         if self._offsets.get(pane, 0) != 0:
             self._offsets[pane] = 0
@@ -2833,7 +2838,7 @@ class TerminalApp(App, inherit_bindings=False):
         panel = self._shortcut_help()
         if panel is None:
             return  # teardown 竞态
-        width = min(HELP_WIDTH, max(10, self.screen.size.width - 2))
+        width = min(help_width(), max(10, self.screen.size.width - 2))
         panel.styles.width = width
         try:
             btn = self.query_one("#btn-help", TopBarButton)
@@ -2942,7 +2947,7 @@ class TerminalApp(App, inherit_bindings=False):
                 self._clear_screen_selection()
                 self._thaw_pane()
             return
-        self._notify("无可复制内容")
+        self._notify(t("app.nothing_to_copy"))
 
     def copy_text(
         self,
@@ -2972,11 +2977,11 @@ class TerminalApp(App, inherit_bindings=False):
         对本地终端用户无意义，还可能拖慢提示），只发 OSC 52 并立即提示。
         """
         if clipboard.is_remote_session():
-            self._notify(note or f"已通过 OSC 52 复制 {len(text)} 字符")
+            self._notify(note or t("app.copied_osc52", count=len(text)))
             return
         ok = await asyncio.to_thread(clipboard.copy_to_system_clipboard, text)
-        prefix = note or f"已复制 {len(text)} 字符"
-        message = prefix if ok else f"{prefix}（仅 OSC 52，终端不支持时无效）"
+        prefix = note or t("app.copied", count=len(text))
+        message = prefix if ok else t("app.copied_osc52_only", prefix=prefix)
         self._notify(message)
 
     def action_paste(self) -> None:
@@ -2995,7 +3000,7 @@ class TerminalApp(App, inherit_bindings=False):
         ``Ctrl-a v`` 是用户显式按下的动作。
         """
         if clipboard.is_remote_session():
-            self._notify(SSH_PASTE_HINT)
+            self._notify(ssh_paste_hint())
             return
         self._paste_from_system(fallback=self._copy_buffer)
 
@@ -3016,7 +3021,7 @@ class TerminalApp(App, inherit_bindings=False):
         if text is None:
             text = fallback
         if not text:
-            self._notify("无可粘贴内容")
+            self._notify(t("app.nothing_to_paste"))
             return
         self._paste_text(text)
 
@@ -3031,12 +3036,13 @@ class TerminalApp(App, inherit_bindings=False):
             return  # dead pane / 无 pane → 静默（与键盘透传同口径，§9 / P2）
         # B1 §3.2-8：提交即返 + 合并一次 poll；_notify 时机改为提交后（提示语义不变）
         self._submit_job(
-            lambda: self.backend.paste(pane, text), label="paste 失败"
+            lambda: self.backend.paste(pane, text),
+            label=t("app.job.paste"),
         )
         if self._offsets.get(pane, 0) != 0:
             self._offsets[pane] = 0
         self._burst()
-        self._notify(f"已粘贴 {len(text)} 字符")
+        self._notify(t("app.pasted", count=len(text)))
 
     def action_detach(self) -> None:
         """Ctrl-a d：前端退出，tmux 会话与全部 shell 继续（§3.1）。"""
@@ -3051,12 +3057,12 @@ class TerminalApp(App, inherit_bindings=False):
                 # 提交被拒（执行器已关）→ 直接退出（会话由 atexit join 兜底杀）
                 submitted = self._submit_job(
                     self.backend.kill_server,
-                    label="kill-server 失败",
+                    label=t("app.job.kill_server"),
                     apply=lambda _: self.exit(),
                 )
                 if submitted is None:
                     self.exit()
 
         self.push_screen(
-            KillConfirm("Kill tmux server？全部 shell 将结束。"), callback
+            KillConfirm(t("app.kill_confirm")), callback
         )

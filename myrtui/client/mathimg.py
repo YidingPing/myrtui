@@ -39,6 +39,7 @@ from typing import Callable, Iterator, Sequence
 import platformdirs
 
 from myrtui.client import katex, mathrender
+from myrtui.i18n import t
 
 log = logging.getLogger("myrtui.mathimg")
 
@@ -169,12 +170,20 @@ def _record_failure(source: str, reason: str) -> None:
             del _LAST_FAILURES[:-200]
 
 
+class EmptyProduct(RuntimeError):
+    """产物为空。
+
+    单独成类是因为「KaTeX 渲染出了空页」这条判定必须在**任何语言**下成立：
+    原来靠 ``"为空" in str(exc)`` 匹配中文文案，i18n 之后 en 下永远匹配不上。
+    """
+
+
 def _reason_for(backend_name: str, exc: Exception) -> str:
     text = str(exc)
-    if backend_name == "katex" and "为空" in text:
-        return "KaTeX 不支持该公式（渲染为空页）"
+    if backend_name == "katex" and isinstance(exc, EmptyProduct):
+        return t("math.katex_empty")
     if "Unicode character" in text:
-        return "公式含中文 / 特殊字符，当前 LaTeX 缺 CJK 字体（CJKutf8 + gbsn）"
+        return t("math.cjk_missing")
     return text[:200] or exc.__class__.__name__
 
 
@@ -239,16 +248,16 @@ def find_tools(env: dict[str, str] | None = None) -> tuple[Tools | None, str | N
     forced_latex = (environ.get(ENV_PDFLATEX) or "").strip()
     if forced_latex:
         if not os.path.exists(forced_latex):
-            return None, f"{ENV_PDFLATEX}={forced_latex!r} 不存在"
+            return None, t("math.pdflatex_env_missing", env=ENV_PDFLATEX, path=forced_latex)
         pdflatex = forced_latex
     else:
         pdflatex = shutil.which("pdflatex")
     if not pdflatex:
-        return None, f"未找到 pdflatex（可用 {ENV_PDFLATEX} 指定）"
+        return None, t("math.no_pdflatex", env=ENV_PDFLATEX)
 
     converter = find_converter(environ)
     if converter is None:
-        return None, "未找到 pdftocairo / pdftoppm（可用 MYRTUI_PDFTOCAIRO 指定）"
+        return None, t("math.no_converter", env=ENV_CONVERTER)
     path, kind = converter
     return Tools(pdflatex, path, kind), None
 
@@ -259,12 +268,12 @@ def find_katex(
     """KaTeX 后端：Chrome + 资产 + 转换器 都齐才可用。"""
     chrome = katex.find_chrome(env)
     if chrome is None:
-        return None, f"未找到 Chrome/Chromium（可用 {katex.ENV_CHROME} 指定）"
+        return None, t("math.no_chrome", env=katex.ENV_CHROME)
     if not katex.assets_available():
-        return None, "KaTeX 资产缺失（client/htmlexport_data/）"
+        return None, t("math.no_katex_assets")
     converter = find_converter(env)
     if converter is None:
-        return None, "未找到 pdftocairo / pdftoppm（可用 MYRTUI_PDFTOCAIRO 指定）"
+        return None, t("math.no_converter", env=ENV_CONVERTER)
     return (
         Backend(
             "katex",
@@ -295,7 +304,7 @@ def select_backend(
     raw = (environ.get(ENV_BACKEND) or "").strip().lower()
     warning: str | None = None
     if raw not in ("", "auto", "katex", "latex"):
-        warning = f"{ENV_BACKEND}={raw!r} 非法，已回落 auto"
+        warning = t("math.backend_invalid", env=ENV_BACKEND, raw=raw)
         log.warning(warning)
         raw = "auto"
 
@@ -482,7 +491,12 @@ def _run(
     if completed.returncode != 0:
         detail = (completed.stderr or b"").decode("utf-8", "replace").strip()
         raise RuntimeError(
-            f"{Path(command[0]).name} 退出码 {completed.returncode}: {detail[:300]}"
+            t(
+                "math.exit_code",
+                tool=Path(command[0]).name,
+                code=completed.returncode,
+                detail=detail[:300],
+            )
         )
 
 
@@ -516,9 +530,9 @@ def _compile(tools: Tools, workdir: Path, tex: str, *, timeout: float, runner) -
     )
     pdf = workdir / "math.pdf"
     if not pdf.is_file() or pdf.stat().st_size == 0:
-        raise RuntimeError("pdflatex 未产出 PDF")
+        raise RuntimeError(t("math.no_pdf"))
     if pdf.stat().st_size > MAX_FILE_BYTES:
-        raise RuntimeError("PDF 超过大小上限")
+        raise RuntimeError(t("math.pdf_too_large"))
     return pdf
 
 
@@ -617,7 +631,7 @@ def _flatten_to_rgb(
         rgba = tint
     bbox = rgba.getchannel("A").getbbox()
     if bbox is None:
-        raise RuntimeError("公式产物为空")
+        raise EmptyProduct(t("math.empty_product"))
     left, top, right, bottom = bbox
     pad = 2
     rgba = rgba.crop(
@@ -643,7 +657,7 @@ def _store(flat: Path, target: Path) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     with open(flat, "rb") as handle:
         if handle.read(len(PNG_MAGIC)) != PNG_MAGIC:
-            raise RuntimeError("产物不是 PNG")
+            raise RuntimeError(t("math.not_png"))
     handle, temp_name = tempfile.mkstemp(dir=str(target.parent), suffix=".png")
     os.close(handle)
     temp = Path(temp_name)
@@ -827,7 +841,7 @@ def render_formulas(
                 entries = wanted
             if len(pages) != len(entries):
                 raise RuntimeError(
-                    f"批量产物页数不符（{len(pages)} != {len(entries)}）"
+                    t("math.batch_pages", got=len(pages), want=len(entries))
                 )
             finalize(pages, entries)
             wanted = [entry for entry in wanted if entry[0] not in out]
@@ -874,7 +888,7 @@ def render_formulas(
                     )
                     entries = [(index, tex, key, target)]
                 if not pages:
-                    raise RuntimeError("转换后没有 PNG")
+                    raise RuntimeError(t("math.no_png_after_convert"))
                 finalize(pages[:1], entries[:1])
         except Exception as exc:  # noqa: BLE001 —— D5：坏一条不毁整篇
             _mark_failed(key)
@@ -943,17 +957,17 @@ def _katex_pages(
         )
         if len(pages) != len(entries):
             raise RuntimeError(
-                f"KaTeX 页数不符（{len(pages)} != {len(entries)}）"
+                t("math.katex_pages", got=len(pages), want=len(entries))
             )
         if _pages_clipped(pages, page, katex.SUPERSAMPLE):
-            last_error = _Clipped(f"页面 {page} 装不下公式")
+            last_error = _Clipped(t("math.page_overflow", page=page))
             page = (
                 min(page[0] * 2, katex.MAX_PAGE_WIDTH),
                 min(page[1] * 2, katex.MAX_PAGE_HEIGHT),
             )
             continue
         return pages, entries
-    raise last_error or RuntimeError("KaTeX 渲染失败")
+    raise last_error or RuntimeError(t("math.katex_failed"))
 
 
 def _pages_clipped(
@@ -1034,6 +1048,6 @@ def prewarm_document(
     if failures:
         _write_debug_failures(failures, env)
     if len(blocks) > max_formulas:
-        return f"公式过多（{len(blocks)} > {max_formulas}），其余用 Unicode 显示"
+        return t("math.too_many", count=len(blocks), max=max_formulas)
     log.debug("公式位图（%s）：%d/%d 条", backend.name, len(rendered), len(blocks))
     return None

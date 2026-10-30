@@ -19,6 +19,8 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
+from myrtui.i18n import t
+
 MAX_PREVIEW_BYTES = 1_000_000
 BINARY_SNIFF_BYTES = 8 * 1024
 
@@ -122,7 +124,7 @@ def _count_lines(text: str) -> int:
 def _error_text(exc: OSError) -> str:
     """``OSError`` → 人类可读文案（Permission denied 等用 strerror）。"""
     reason = exc.strerror or str(exc)
-    return f"无法读取：{reason}"
+    return t("file.read_failed", reason=reason)
 
 
 def read_for_preview(path: str | Path) -> Preview:
@@ -131,18 +133,18 @@ def read_for_preview(path: str | Path) -> Preview:
     try:
         info = target.stat()
     except FileNotFoundError:
-        return _empty(error="文件不存在（可能已被删除）")
+        return _empty(error=t("file.gone"))
     except OSError as exc:
         return _empty(error=_error_text(exc))
     if not stat.S_ISREG(info.st_mode):
-        return _empty(size=info.st_size, error="不是普通文件")
+        return _empty(size=info.st_size, error=t("file.not_regular"))
 
     size = info.st_size
     try:
         with target.open("rb") as handle:
             data = handle.read(MAX_PREVIEW_BYTES + 1)
     except FileNotFoundError:
-        return _empty(size=size, error="文件不存在（可能已被删除）")
+        return _empty(size=size, error=t("file.gone"))
     except OSError as exc:
         return _empty(size=size, error=_error_text(exc))
 

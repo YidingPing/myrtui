@@ -17,7 +17,13 @@ blocking work off the UI thread, click injected on release).
   follows the same convention. Explain *why* (measured behaviour, past bugs),
   not *what*.
 - **User-facing text is English**: README, `docs/`, CLI output, log messages
-  meant for humans, and (over time) the TUI itself.
+  meant for humans.
+- **The TUI is localised** (`en` by default, `zh_CN` for the owner): every
+  visible string goes through `myrtui.i18n.t("key")`, with the text in
+  `myrtui/locales/{en,zh_CN}.py`. Do not hardcode a UI string in module code,
+  do not call `t()` at module level (it freezes the language at import), and
+  keep both catalogs' keys and `{}` placeholders in sync —
+  `tests/test_i18n.py` enforces all three.
 - **Commit subjects are English.**
 
 ## Repositories and remotes
@@ -102,6 +108,10 @@ documents the known traps: shell-readiness races, stdout capture inside Textual,
 
 - Every behaviour change needs a regression test that fails before the fix.
 - Tests assert on **ids/state**, not on translated labels, wherever practical.
+  `tests/conftest.py` pins `MYRTUI_LANG=zh_CN` so the existing Chinese
+  assertions keep working; new assertions should compare against `t("key")`
+  (or a stable `id`), and language-detection tests take the `no_lang_pin`
+  marker.
 - Textual timing is not deterministic: wait for a condition
   (`await pilot.pause()` in a loop / helper), never a single fixed `sleep`.
   `tests/test_v36.py::_scroll_preview` is the reference pattern.
