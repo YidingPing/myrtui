@@ -13,7 +13,7 @@
 
 1. 按 alpha 去透明边；
 2. **预合成到主题背景色**（Tabby 的 Sixel P2=1 语义不可靠，见
-   ``myrtui-internal/docs/V37-SIXEL-GRAPHICS-PLAN.md`` §3.4 F4）；
+   ``docs-internal/docs/V37-SIXEL-GRAPHICS-PLAN.md`` §3.4 F4）；
 3. 缩放到「与正文同字号」（1em = ``cell_height / 1.2`` 终端像素）；
 4. 原子写入 ``<cache>/myrtui/mathimg/<sha1>.png``。
 

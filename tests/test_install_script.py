@@ -6,7 +6,7 @@
 - MYRTUI_DEPS 三档开关；
 - tmux / micro / ov / termtex 都走统一的询问路径；
 - 安装源是 PyPI：不得再出现 Gitea / 内网地址 / token 逻辑（v0.4.4 迁移，
-  见 myrtui-internal/docs/GITHUB-PUBLISH-PLAN.md §3.1）。
+  见 docs-internal/docs/GITHUB-PUBLISH-PLAN.md §3.1）。
 """
 from __future__ import annotations
 

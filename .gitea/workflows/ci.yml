@@ -1,0 +1,138 @@
+# myrtui CI（Gitea Actions，自建 runner）
+#
+# 基础设施：内网 Gitea 1.24.6 + 三台 gitea-runner 4.1.0（全部 host 模式，标签取
+# GitHub 风格名，使 runs-on 可直接写 ubuntu-latest / macos-latest）。本 workflow
+# 只用其中两台；Windows runner 用不上（cli.py 依赖 fcntl，tmux 也无原生版）。
+#
+# 三个刻意的取舍（都不是 GitHub 托管 runner 的写法）：
+#
+# 1. `builtin:checkout` 而非 `actions/checkout@v4`
+#    —— runner 4.x 内置的 Go 实现，直接从 Gitea 克隆：零 github.com 依赖
+#    （本网络到 github 的链路不稳定，曾连续 i/o timeout），也不需要 node。
+#
+# 2. 不用 `actions/setup-python`
+#    —— 同上（它要从 github 下载解释器）。两台 runner 各自带一个满足
+#    `requires-python >= 3.10` 的解释器，选择链见 "Set up Python"。
+#
+# 3. 只有 macos + ubuntu 两格，没有 Python 版本矩阵
+#    —— 自建 runner 各带一个解释器（macOS: Homebrew 3.14；Ubuntu:
+#    /usr/bin/python3.14）。3.10–3.14 的版本覆盖由 release.yml 在 GitHub 上跑
+#    （公开仓的 GitHub runner 免费），日常不付这份代价。
+#
+# 两台 runner 的现状（一次性探针实测）：
+#   macos-latest : macOS arm64 / python3.14 / tmux 3.8
+#   ubuntu-latest: Ubuntu WSL2 / python3.14 **无 pip、无 ensurepip** /
+#                  sudo 需密码（装不了系统包）/ tmux 3.6
+# → Ubuntu 侧必须自带 pip 引导链，见 "Install dependencies"。
+#
+# 工作流所在目录：`.gitea/workflows/` 是 Gitea 的原生路径，GitHub 不读它；
+# 发布链路（tag → PyPI）在 `.github/workflows/release.yml`，只跑在 GitHub。
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    # tag 推送不重复跑 CI：发布流程约定「先推 main → CI 绿 → 再推 tag」。
+    # 否则 main + tag 指向同一 commit 会触发两轮矩阵（runner 只有两台，
+    # 第二轮要排队等第一轮结束，发布总耗时直接翻倍）。
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: builtin:checkout
+
+      - name: Preflight
+        shell: bash
+        run: |
+          set -eux
+          uname -a
+          command -v tmux
+          tmux -V
+
+      - name: Set up Python
+        shell: bash
+        run: |
+          set -eux
+          # 注意：$GITHUB_ENV 只对**后续**步骤生效，本步骤内的判空要用本地变量。
+          PY=""
+          for c in python3.14 python3.13 python3.12 python3.11 python3.10 python3; do
+            if command -v "$c" >/dev/null 2>&1 \
+               && "$c" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] >= (3, 10) else 1)'; then
+              PY="$c"
+              break
+            fi
+          done
+          if [ -z "$PY" ]; then
+            echo "没有找到 >= 3.10 的 python3" >&2
+            exit 1
+          fi
+          echo "PY=$PY" >> "$GITHUB_ENV"
+          echo "selected $PY -> $("$PY" -V)"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -eux
+          VENV=".venv-ci"
+
+          # --- 1) 建 venv ---
+          # Ubuntu runner 的系统 python3 缺 ensurepip（Debian/Ubuntu 拆包，
+          # 正常要 `apt install python3-venv`；但该机 sudo 要密码、装不了）
+          # → 退到 --without-pip，后面手工把 pip 灌进去。
+          if ! "$PY" -m venv "$VENV"; then
+            echo ">>> venv 自动引导失败（多半缺 ensurepip），改用 --without-pip"
+            rm -rf "$VENV"
+            "$PY" -m venv --without-pip "$VENV"
+          fi
+          VPY="$VENV/bin/python"
+
+          # --- 2) 让 venv 内有 pip ---
+          # 三级回退：venv 自带 → get-pip.py → PyPI 上的 pip wheel。
+          # 后两级覆盖「无 ensurepip 且 bootstrap.pypa.io 不可达」的最坏情况。
+          if "$VPY" -m pip --version >/dev/null 2>&1; then
+            echo ">>> venv 自带 pip"
+          elif "$VPY" -c 'import urllib.request; urllib.request.urlretrieve("https://bootstrap.pypa.io/get-pip.py", "get-pip.py")'; then
+            echo ">>> 用 get-pip.py 引导 pip"
+            "$VPY" get-pip.py
+            rm -f get-pip.py
+          else
+            echo ">>> get-pip.py 不可达，改用 PyPI 上的 pip wheel"
+            "$VPY" -c 'import json, urllib.request; m = json.load(urllib.request.urlopen("https://pypi.org/pypi/pip/json")); u = next(f["url"] for f in m["urls"] if f["filename"].endswith("-py3-none-any.whl")); urllib.request.urlretrieve(u, "pip.whl"); print("downloaded", u)'
+            export PYTHONPATH="$PWD/pip.whl"
+          fi
+          # 走 wheel 回退时，pip 是从 pip.whl 里跑的；先把它装进 venv，
+          # 之后统一用 venv 自己的 pip。
+          "$VPY" -m pip install -U pip
+          unset PYTHONPATH
+          "$VPY" -m pip --version
+
+          # --- 3) 装依赖 ---
+          "$VPY" -m pip install -e ".[dev]"
+
+          # --- 4) 落定最终解释器/依赖版本，写进日志便于比对 ---
+          "$VPY" -V
+          "$VPY" -m pip list
+
+      - name: Docs policy
+        shell: bash
+        # 公开仓的文档边界：docs/ 白名单、无私网地址、无内部文档名、无 gitlink、
+        # docs-internal 必须是未跟踪的嵌套仓。见 tests/test_docs_policy.py。
+        run: .venv-ci/bin/python -m pytest tests/test_docs_policy.py -q
+
+      - name: Test
+        shell: bash
+        # 不加 -q：pyproject 的 addopts 已有 -q，再叠一层会变 -qq（连
+        # "N passed" 汇总行都不打），CI 日志需要那行计数。
+        # -n 2：自建 runner 核数未知/有限，取保守值（本机 8 核实测 -n 4 约 1 分钟）。
+        # 用例隔离（uuid socket + tmp_path + 独立的 _data_dir），可安全并行；
+        # 若哪天要提到 -n 4+，先看 tests/README.md 里「shell 就绪竞态」那条。
+        run: .venv-ci/bin/python -m pytest -n 2

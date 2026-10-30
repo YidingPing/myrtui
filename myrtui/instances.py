@@ -1,6 +1,6 @@
 """实例管理子命令：``myrtui ls`` / ``attach`` / ``stop``（及 ``list`` 别名）。
 
-计划：``myrtui-internal/docs/DISTRIBUTION-INSTANCES-PLAN.md`` §3（已合入评审 R1–R6 / M1–M6）。
+计划：``docs-internal/docs/DISTRIBUTION-INSTANCES-PLAN.md`` §3（已合入评审 R1–R6 / M1–M6）。
 由 ``cli.main`` 按 ``argv[1]`` 字面量预分发进入本模块（cli.SUBCOMMANDS）。
 
 关键约定（逐条对应评审）：

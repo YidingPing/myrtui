@@ -13,14 +13,19 @@ GitHub and inside the PyPI sdist, so anything here is public forever.
 ## What does not belong here
 
 Design plans (`*-PLAN.md`), acceptance records (`*-ACCEPTANCE.md`), reviews
-(`*-REVIEW.md`), release playbooks and migration notes are maintained in a
-**private repository** (`myrtui-internal`) and are not published. Code comments
-that need to point at them use `myrtui-internal/docs/…` and always degrade
-gracefully if a reader cannot open the link.
+(`*-REVIEW.md`), release playbooks and migration notes live in `docs-internal/`
+at the repository root — a **nested git repository** (its own history, pushed
+only to the maintainer's private Gitea) that `.gitignore` keeps out of this
+one. Nothing under it is ever published, and a fresh clone of this repository
+does not contain it.
 
-`tests/test_docs_policy.py` enforces the allowed list above: adding any other
-file here fails CI with an explanation. The sdist whitelist in `pyproject.toml`
-independently limits what gets uploaded to PyPI.
+Code comments that need to point at such a note use `docs-internal/docs/…` and
+always degrade gracefully when a reader cannot open the link.
+
+`tests/test_docs_policy.py` enforces the boundary: the allow-list above, no
+internal document names anywhere in the tree, no private network addresses, no
+embedded-repository git links, and `docs-internal/` staying untracked. The sdist
+whitelist in `pyproject.toml` independently limits what gets uploaded to PyPI.
 
 ## Writing style
 

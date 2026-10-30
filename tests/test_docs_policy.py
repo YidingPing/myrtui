@@ -1,12 +1,16 @@
 """公开仓的「文档边界」守卫。
 
 公开仓的 ``docs/`` 是**用户向文档**，会被 GitHub 与 PyPI sdist 同时发布；
-设计/方案/验收记录住在私有仓 ``myrtui-internal``。这条边界靠人记不住，所以
-用测试锁死（见 ``docs/README.md`` / ``AGENTS.md``）：
+设计/方案/验收记录住在 ``docs-internal/``——那是**嵌套在本目录下的独立 git 仓**
+（只推内网 Gitea 的 ``myrtui-docs``），由本仓 ``.gitignore`` 挡住。这条边界靠
+人记不住，所以用测试锁死（见 ``docs/README.md`` / ``AGENTS.md``）：
 
 - ``docs/`` 下只允许白名单文件（新增必须先改白名单，等于一次显式决策）；
 - 任何 ``*-PLAN.md`` / ``*-ACCEPTANCE.md`` / ``*-REVIEW.md`` / ``DESIGN.md``
   一类内部文档出现在仓库任何位置都算回流；
+- ``docs-internal/`` 必须保持「未跟踪 + 被忽略」，且不能以 gitlink 形式混进来
+  （``git add docs-internal`` 会静默变成一个 mode 160000 的 submodule 指针，
+  公开仓里就出现一个打不开的目录项）；
 - 已跟踪文件里不得出现 RFC1918 私网地址（内网 Gitea 曾散落在 README、
   install.sh 与 release 脚本里）；
 - ``pyproject.toml`` 的 sdist 白名单只能包含 ``docs/`` 下同样被允许的文件。
@@ -85,8 +89,51 @@ def test_docs_dir_is_public_only() -> None:
     ]
     assert not offenders, (
         "docs/ 只放用户向文档（白名单见 tests/test_docs_policy.py）。"
-        "设计/验收/评审记录请写到私有仓 myrtui-internal：\n  "
+        "设计/验收/评审记录请写到 docs-internal/（嵌套私有仓）：\n  "
         + "\n  ".join(offenders)
+    )
+
+
+def test_docs_internal_is_untracked_nested_repo() -> None:
+    """内部文档必须是「被忽略的嵌套仓」，不能混进本仓的索引。
+
+    两种失败方式都会让公开仓出问题：被跟踪 → 内容直接公开；被 add 成
+    gitlink → 公开仓里挂一个打不开的 submodule 指针。CI 的干净 clone 里
+    ``docs-internal/`` 根本不存在，所以这里只查规则，不查目录。
+    """
+    tracked = [
+        p for p in _tracked_files() if p == "docs-internal" or p.startswith("docs-internal/")
+    ]
+    ignored = subprocess.run(
+        ["git", "check-ignore", "-q", "docs-internal/"],
+        cwd=ROOT,
+        capture_output=True,
+    ).returncode == 0
+    assert not tracked, "docs-internal/ 不能被本仓跟踪：\n  " + "\n  ".join(tracked)
+    assert ignored, (
+        "docs-internal/ 必须写进 .gitignore——它是独立 git 仓，本仓只允许忽略它。"
+        "少这一行时 `git add -A` 会把整个私有仓的路径塞进公开仓的索引。"
+    )
+
+
+def test_no_gitlinks() -> None:
+    """不允许出现 mode 160000（嵌入仓库指针）。
+
+    ``git add docs-internal`` 只会给一句 warning，然后把目录记成 gitlink；
+    ``.gitignore`` 对**已经 stage 的**条目无效，所以这条要单独兜住。
+    """
+    out = subprocess.run(
+        ["git", "ls-files", "-s"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    links = [line.split("\t", 1)[-1] for line in out.splitlines() if line.startswith("160000")]
+    assert not links, (
+        "公开仓不允许出现 gitlink（mode 160000）：\n  "
+        + "\n  ".join(links)
+        + "\n修法：git rm --cached <path>，并确认 .gitignore 里有 docs-internal/"
     )
 
 

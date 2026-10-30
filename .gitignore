@@ -19,6 +19,11 @@ uv.lock
 .coverage
 htmlcov/
 
+# 内部设计/验收记录：独立 git 仓，嵌套在本目录下，只推内网 Gitea（myrtui-docs）。
+# 必须保持未跟踪——一旦被 `git add` 进去会变成 gitlink（mode 160000），
+# 公开仓里就会出现一个打不开的 submodule 指针（tests/test_docs_policy.py 守着）。
+docs-internal/
+
 # Editors / OS
 .DS_Store
 .idea/

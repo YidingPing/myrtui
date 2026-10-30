@@ -1,6 +1,6 @@
 """Markdown 全屏只读预览（v0.36；v0.37 增加 Sixel/TGP 位图）。
 
-设计边界（``myrtui-internal/docs/V36-MARKDOWN-PREVIEW-PLAN.md`` / ``myrtui-internal/docs/V37-SIXEL-GRAPHICS-PLAN.md``）：
+设计边界（``docs-internal/docs/V36-MARKDOWN-PREVIEW-PLAN.md`` / ``docs-internal/docs/V37-SIXEL-GRAPHICS-PLAN.md``）：
 
 - **全屏 ``ModalScreen``**：不占 pane、不改 tmux 后端；打开期间复用
   ``TerminalApp.on_key`` 首行的 ``MainScreen`` 闸门，键不会泄进内层 shell；

@@ -1,7 +1,7 @@
 """「刷新此目录」回归（v0.30 能力，v0.34 上传移除时从 test_v30 迁出）。
 
 v0.30 的目录右键菜单有两半：上传（v0.34 整体移除，见
-``myrtui-internal/docs/V34-REMOVE-UPLOAD-PLAN.md``）与「刷新此目录」。本文件只守后者：
+``docs-internal/docs/V34-REMOVE-UPLOAD-PLAN.md``）与「刷新此目录」。本文件只守后者：
 
 - 菜单结构：文件行不含目录动作，目录行含 ``refresh_dir``；
 - 刷新语义：新增文件可见、其它展开与光标保持、根节点、目录被删刷父目录、

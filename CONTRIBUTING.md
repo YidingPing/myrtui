@@ -53,9 +53,10 @@ files listed in `docs/README.md`; `tests/test_docs_policy.py` enforces that
 list, forbids private network addresses and blocks internal document names
 (`*-PLAN.md`, `*-ACCEPTANCE.md`, …) anywhere in the tree.
 
-Design plans, acceptance records and release playbooks live in the maintainer's
-private repository (`myrtui-internal`) and are deliberately not published. If
-you need that context, open an issue — do not add such files here.
+Design plans, acceptance records and release playbooks live in `docs-internal/`
+at the repository root: a nested git repository with its own history, excluded
+by `.gitignore` and never published. A fresh clone does not contain it. If you
+need that context, open an issue — do not add such files here.
 
 ## Style
 

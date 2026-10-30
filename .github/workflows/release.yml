@@ -1,6 +1,11 @@
-# myrtui release（GitHub Actions）：打 tag → 验证 → 发 PyPI + GitHub Release
+# myrtui release（GitHub Actions 专属）：打 tag → 验证 → 发 PyPI + GitHub Release
 #
-# 链路（文档见 docs/GITHUB-PUBLISH-PLAN.md §3.3）：
+# 只在 GitHub 上跑（四个 job 都有 `github.server_url` 守卫）：本项目的日常 CI 在
+# Gitea 自建 runner 上（见 `.gitea/workflows/ci.yml`），GitHub 只承担发布——
+# PyPI 的 Trusted Publishing 走 OIDC，只支持 GitHub / GitLab / Google /
+# ActiveState，Gitea 没有。
+#
+# 链路（内部设计记录见 docs-internal/docs/GITHUB-PUBLISH-PLAN.md §3.3）：
 #   verify（macOS，唯一一次 macOS 测试）
 #     → build（wheel + sdist）
 #       → publish-pypi（Trusted Publishing，OIDC，无需 token）
@@ -29,6 +34,7 @@ permissions:
 jobs:
   verify:
     name: verify (macOS)
+    if: github.server_url == 'https://github.com'
     runs-on: macos-latest
     timeout-minutes: 25
     steps:
@@ -55,6 +61,7 @@ jobs:
 
   build:
     name: build
+    if: github.server_url == 'https://github.com'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -96,7 +103,7 @@ jobs:
   publish-pypi:
     name: publish (PyPI)
     needs: [verify, build]
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.server_url == 'https://github.com' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
@@ -119,7 +126,7 @@ jobs:
   github-release:
     name: github release
     needs: [publish-pypi]
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.server_url == 'https://github.com' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

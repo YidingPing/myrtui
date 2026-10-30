@@ -263,4 +263,4 @@ App 结束后才输出（P1 验收报告 §6 记录了一次真实踩坑与撤�
 - **直写 fd 2**：`os.write(2, ...)` 或 `sys.__stderr__.write(...)`，
   绕过 Textual 对 `sys.stdout` / `sys.stderr` 的替换。
 
-详见私有仓 `myrtui-internal` 的 `docs/P1-ACCEPTANCE.md` §6（内部验收记录，不随公开仓发布）。
+详见 `docs-internal/docs/P1-ACCEPTANCE.md` §6（嵌套的独立仓，内部验收记录，不随公开仓发布）。

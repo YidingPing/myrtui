@@ -1,6 +1,6 @@
 """v0.34：上传能力整体移除后的防回归。
 
-方案见 ``myrtui-internal/docs/V34-REMOVE-UPLOAD-PLAN.md``。这里锁住的都是「删干净」的证据：
+方案见 ``docs-internal/docs/V34-REMOVE-UPLOAD-PLAN.md``。这里锁住的都是「删干净」的证据：
 
 1. 目录菜单只剩「刷新此目录 / 复制相对 / 复制绝对」；
 2. ``Ctrl-a u`` 回到「未定义前缀键透传」语义（``u`` 进 shell）；

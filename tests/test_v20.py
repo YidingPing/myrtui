@@ -7,7 +7,7 @@
 - 「复制绝对路径」走双剪贴板通道，关闭后焦点回文件树；
 - 分隔线热区收到 ±1 后，树最右列（距线 2 格）的右键不再被 App 层拖拽截获。
 
-判定口径见 ``myrtui-internal/docs/V20-CONTEXT-MENU-PLAN.md`` §7/§8。
+判定口径见 ``docs-internal/docs/V20-CONTEXT-MENU-PLAN.md`` §7/§8。
 """
 from __future__ import annotations
 

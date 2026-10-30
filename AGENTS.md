@@ -20,6 +20,33 @@ blocking work off the UI thread, click injected on release).
   meant for humans, and (over time) the TUI itself.
 - **Commit subjects are English.**
 
+## Repositories and remotes
+
+Three places, three jobs — **do not mix them up**:
+
+| Remote | Role | What may be pushed |
+|---|---|---|
+| `gitea` (LAN) | **source of truth**, dev CI | `main` and every feature branch, freely |
+| `origin` (GitHub) | public mirror | **`main` only**, plus release tags — never a branch |
+| `docs-internal/` (nested repo) | internal design notes | pushed on its own schedule |
+
+Two rules that exist because breaking them is unrecoverable:
+
+- **`git push origin main` is safe only because `docs-internal/` is gitignored.**
+  Never add it to this repo's index (`git add docs-internal` silently creates a
+  gitlink); `tests/test_docs_policy.py` blocks that. Never push a feature branch
+  to `origin` — GitHub only ever sees `main` and release tags.
+- **The Gitea remote needs the *system* git.** `PATH` points at MacPorts git,
+  which cannot reach the LAN (`connect() = EHOSTUNREACH` in ~1 ms, *not* a
+  server failure):
+
+  ```sh
+  GIT_TERMINAL_PROMPT=0 /usr/bin/git -c credential.helper=store push gitea main
+  ```
+
+  Same for `fetch`/`ls-remote`. Anything else (`pytest`, GitHub pushes) uses the
+  normal `PATH`.
+
 ## Commands
 
 ```sh
@@ -43,11 +70,16 @@ documents the known traps: shell-readiness races, stdout capture inside Textual,
   `mdit-py-plugins` (and the conditional `textual-image`/`pillow` extras).
   External tools (`termtex`, `ov`, `micro`, Chrome, `poppler`, clipboard
   commands) are always optional and must degrade with a readable message.
-- **Do not put internal documents in this repo.** `docs/` is user-facing only;
-  design plans, acceptance records and reviews live in a private repo that you
-  probably cannot read. If you need that context, ask the maintainer.
-- **Do not `git push --tags`.** Historical tags point at a pre-public history;
-  only a release tag for the version being published may be pushed.
+- **Internal documents never enter this repository.** `docs/` is user-facing
+  only; design plans, acceptance records and reviews live in `docs-internal/`
+  (nested repo, ignored here, never published). If it is missing from your
+  checkout, say so instead of inventing the context.
+- **`docs-internal/` and this repo are separate git repositories.** Code and its
+  rationale therefore land in *two* commits. Before reporting a task done, run
+  `git -C docs-internal status --short` — a design note left uncommitted there
+  is invisible in this repo's status.
+- **Do not `git push --tags`.** Only the release tag for the version being
+  published may be pushed, and only to `origin`.
 - **Do not rewrite history**, force-push `main`, or touch `python -m build`
   output (`dist/`).
 - **Keep the sdist whitelist honest**: `pyproject.toml` lists exactly what may
@@ -69,16 +101,34 @@ documents the known traps: shell-readiness races, stdout capture inside Textual,
 | You are writing… | Put it in… |
 |---|---|
 | user docs (install, usage, architecture) | `docs/` in this repo (allowed list enforced by `tests/test_docs_policy.py`) |
-| design notes / plans / acceptance records | the private repo — **not here** |
+| design notes / plans / acceptance records | `docs-internal/docs/` (nested repo) — **not** `docs/` |
 | release notes | GitHub Releases (generated at tag time) |
 | a module's rationale | the module's header docstring (Chinese) |
 
+## CI
+
+- **Development CI runs on Gitea** (`.gitea/workflows/ci.yml`, self-hosted
+  `ubuntu-latest` + `macos-latest` runners, `builtin:checkout` so nothing is
+  fetched from github.com). It has no Python version matrix — each runner has a
+  single interpreter.
+- **GitHub runs only `.github/workflows/release.yml`**, gated on tags. Its jobs
+  carry an `if: github.server_url == 'https://github.com'` guard so the same
+  file is a no-op if Gitea ever reads it.
+
 ## Release (maintainer only)
 
-Bump `pyproject.toml` **and** `myrtui/__init__.py`, push `main`, wait for green
-CI, then `git tag v<version> && git push origin v<version>`. The tag runs
-`release.yml`: macOS verification → build → PyPI (Trusted Publishing) → GitHub
-Release. Never re-upload an existing version.
+Bump `pyproject.toml` **and** `myrtui/__init__.py`, commit on `main`, push to
+`gitea`, wait for green CI there, then push `main` to `origin` and push the tag
+**only to GitHub**:
+
+```sh
+GIT_TERMINAL_PROMPT=0 /usr/bin/git -c credential.helper=store push gitea main
+git push origin main
+git tag v<version> && git push origin v<version>
+```
+
+The tag runs `release.yml`: macOS verification → build → PyPI (Trusted
+Publishing) → GitHub Release. Never re-upload an existing version.
 
 ## Code style
 

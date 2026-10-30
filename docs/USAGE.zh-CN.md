@@ -587,6 +587,6 @@ PyPI 与 GitHub Releases。
 
 贡献方式、代码风格与**注释语言政策**见 [CONTRIBUTING.md](../CONTRIBUTING.md)；
 架构说明见 [ARCHITECTURE.md](ARCHITECTURE.md)；英文手册见 [USAGE.md](USAGE.md)；
-首页见 [README.md](../README.md)。内部的设计 / 验收记录保存在私有仓
-`myrtui-internal`，不随公开仓发布。
+首页见 [README.md](../README.md)。内部的设计 / 验收记录保存在 `docs-internal/`
+（嵌套的独立 git 仓），不随公开仓发布。
 

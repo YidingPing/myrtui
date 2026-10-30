@@ -8,7 +8,7 @@ alt）；单文件图片预览复用同一套路径校验 / 解码 / alpha 预�
 - 只允许普通文件；单文件 ≤10 MB、像素 ≤4000×4000；
 - 解码成功后按终端单元格尺寸预缩放（宽度 ≤ 正文宽、高度 ≤ 20 行），并把
   alpha **预合成到主题背景色**（Tabby 的 Sixel 透明语义不可靠，见
-  ``myrtui-internal/docs/V37-SIXEL-GRAPHICS-PLAN.md`` §3.4 F4）。
+  ``docs-internal/docs/V37-SIXEL-GRAPHICS-PLAN.md`` §3.4 F4）。
 
 没有 Pillow 时全部回落 alt 文本——绝不抛异常、绝不吞掉前后段落。
 """

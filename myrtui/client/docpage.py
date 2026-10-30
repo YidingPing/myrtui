@@ -6,7 +6,7 @@
 的 PNG 与页面 px 一一对应，显示端 1:1、不重采样。
 
 为什么不用「一张长图 + 滚动」：单张几万像素高的图要么撞 Chrome 截图上限，要么
-让 ``textual-image`` 每次滚动都重编码一大块缓冲（见 ``myrtui-internal/docs/V37.2-PAGED-PREVIEW-PLAN.md``
+让 ``textual-image`` 每次滚动都重编码一大块缓冲（见 ``docs-internal/docs/V37.2-PAGED-PREVIEW-PLAN.md``
 §2）。PDF 天然分页，一页 = 一屏，payload 有界。
 
 本模块**纯逻辑**（不 import Textual），子进程只允许在 :func:`render_pages`
