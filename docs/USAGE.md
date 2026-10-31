@@ -225,7 +225,8 @@ Rendering: GFM headings, paragraphs, lists, tables, quotes, code blocks
 block math `$$...$$` / `\[...\]` are rendered by `termtex` when installed
 (fractions, matrices, `cases`); without it the LaTeX source is shown. Currency
 like `$100 and $200` is not mistaken for math. Links do not navigate; the file
-is not auto-refreshed (`r` reloads). Files above 512 KiB are refused with a
+is not auto-refreshed — if it changes on disk while open, the footer says so and
+`r` reloads it. Files above 512 KiB are refused with a
 message; binary/missing/empty files show a readable reason.
 
 **LaTeX page view** (`v`): the whole document becomes self-contained HTML with

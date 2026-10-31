@@ -121,6 +121,7 @@ MESSAGES: dict[str, str] = {
     "img.loading": "加载中…",
     # ---- Markdown 预览（mdpreview.py）--------------------------------------
     "md.footer": "Esc 返回 · r 重载 · v LaTeX 排版 · ↑↓/PgUp/PgDn 滚动",
+    "md.changed": "文件已被外部改动 · r 重载",
     "md.no_links": "预览不打开链接",
     "md.rendering": "渲染中…",
     "md.too_large": "Markdown 过大（>512 KiB），请用「打开」",

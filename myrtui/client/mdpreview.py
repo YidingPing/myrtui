@@ -57,6 +57,22 @@ log = logging.getLogger("myrtui.mdpreview")
 MARKDOWN_PREVIEW_MAX_BYTES = 512_000
 """Markdown 预览的入口上限（512 KiB）；超过提示用「打开」。"""
 
+# 外部改动探测节奏（秒，v0.53）：1 s 一次 ``stat``，比侧栏的 3 s 快一档——
+# 预览开着的时候用户就盯着这一屏，等 3 s 才知道「文件变了」太钝。
+STAT_INTERVAL = 1.0
+
+
+def _stat_signature(path: str) -> tuple[int, int] | None:
+    """``(st_mtime_ns, st_size)``；stat 失败返回 ``None``（文件没了 / 无权限）。
+
+    ``mtime_ns`` 而不是秒级 ``mtime``：同一秒内连写两次（保存两次）也要能区分。
+    """
+    try:
+        info = os.stat(path)
+    except OSError:
+        return None
+    return (info.st_mtime_ns, info.st_size)
+
 IMAGE_ALT_PREFIX = "🖼 "
 
 DEFAULT_FOREGROUND = "#E0E0E0"
@@ -404,6 +420,8 @@ class MarkdownPreviewScreen(ModalScreen[None], inherit_bindings=False):
         self._restore_scroll: int | None = None
         self._notice_timer = None
         self._resize_timer = None
+        self._stat_timer = None
+        self._stat_sig: tuple[int, int] | None = None
         self._render_width = 0
         self._markdown = self._make_markdown()
 
@@ -433,6 +451,8 @@ class MarkdownPreviewScreen(ModalScreen[None], inherit_bindings=False):
         self._markdown.display = False
         self.query_one("#mdpreview-scroll", VerticalScroll).focus()
         self._load()
+        # v0.53：外部改动静默提示（不自动重载，见 _check_external_change）
+        self._stat_timer = self.set_interval(STAT_INTERVAL, self._check_external_change)
 
     def on_unmount(self) -> None:
         if self._notice_timer is not None:
@@ -441,6 +461,9 @@ class MarkdownPreviewScreen(ModalScreen[None], inherit_bindings=False):
         if self._resize_timer is not None:
             self._resize_timer.stop()
             self._resize_timer = None
+        if self._stat_timer is not None:
+            self._stat_timer.stop()
+            self._stat_timer = None
 
     def on_resize(self, event) -> None:  # noqa: ARG002 —— 只看尺寸
         """宽度变了 → termtex 块级缓存键失效，防抖后按新宽度重排。"""
@@ -462,6 +485,28 @@ class MarkdownPreviewScreen(ModalScreen[None], inherit_bindings=False):
         self._restore_scroll = int(scroll.scroll_y)
         self._load()
 
+    # ---------- 外部改动（v0.53） ----------
+
+    @work(exclusive=True, group="mdpreview-stat", exit_on_error=False)
+    async def _check_external_change(self) -> None:
+        """文件在磁盘上被改写 → footer 提示一句，**不自动重载**。
+
+        自动重载会在读长文时把内容从眼前抽走（滚动位置能恢复，视觉跳变仍在），
+        而 ``r`` 本来就是这里唯一的重载入口，代价只有一次按键。所以只提示。
+
+        没有基线（``_stat_sig is None``，首帧还没读完盘）时直接跳过，避免刚打开
+        就弹一句「文件变了」。
+        """
+        if self._stat_sig is None or not self._alive():
+            return
+        signature = await asyncio.to_thread(_stat_signature, self._absolute)
+        if signature is None or signature == self._stat_sig:
+            return
+        if not self._alive():
+            return
+        self._stat_sig = signature  # 同一次改动只提示一次，别每秒刷屏
+        self._notice(t("md.changed"), seconds=6.0)
+
     # ---------- 加载 ----------
 
     @work(exclusive=True, group="mdpreview", exit_on_error=False)
@@ -470,11 +515,10 @@ class MarkdownPreviewScreen(ModalScreen[None], inherit_bindings=False):
 
     async def _read_and_render(self) -> None:
         self._set_loading()
-        try:
-            size = os.path.getsize(self._absolute)
-        except OSError:
-            # 文件被删 / 无权限：不在这里判死，交给 read_for_preview 出可读原因。
-            size = None
+        # 顺手记下这次读盘时的签名（v0.53）：既是 512 KiB 闸门的尺寸来源，
+        # 也是「外部改动」比较的基线——重载一次就把基线推到当前，不会自己刷自己。
+        self._stat_sig = _stat_signature(self._absolute)
+        size = None if self._stat_sig is None else self._stat_sig[1]
         if size is not None and size > MARKDOWN_PREVIEW_MAX_BYTES:
             self._show_message(t("md.too_large"))
             self._restore_scroll = None

@@ -124,6 +124,7 @@ MESSAGES: dict[str, str] = {
     "img.loading": "Loading...",
     # ---- markdown preview (mdpreview.py) -----------------------------------
     "md.footer": "Esc back · r reload · v LaTeX typeset · up/down, PgUp/PgDn scroll",
+    "md.changed": "File changed on disk · r reloads",
     "md.no_links": "The preview does not open links",
     "md.rendering": "Rendering...",
     "md.too_large": "Markdown is too large (>512 KiB); use \"Open\" instead",

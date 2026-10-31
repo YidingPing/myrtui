@@ -593,6 +593,44 @@ def test_reload_keeps_scroll_position(tmp_path):
     asyncio.run(scenario())
 
 
+def test_preview_reports_external_change(tmp_path):
+    """v0.53：文件在磁盘上被改写 → footer 提示一次，但不自动重载正文。"""
+    from myrtui.i18n import t
+
+    app = _app(tmp_path)
+    absolute = str((tmp_path / "notes.md").resolve())
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.3)
+            app._context_menu_closed("preview", "notes.md", absolute, False)
+            await pilot.pause(0.6)
+            screen = app.screen
+            footer = screen.query_one("#mdpreview-footer", Static)
+            assert t("md.changed") not in str(footer.content)
+            before = screen._text
+
+            Path(absolute).write_text("# notes\n\n## EXTERNAL\n", encoding="utf-8")
+
+            assert await _wait_until(
+                pilot, lambda: t("md.changed") in str(footer.content), timeout=4.0
+            ), "外部改动没有提示"
+            # 只提示，不自动重载：正文还是旧的，等用户按 r
+            assert screen._text == before
+
+            await pilot.press("r")
+            assert await _wait_until(
+                pilot, lambda: "EXTERNAL" in screen._text, timeout=5.0
+            ), "r 没有重载新内容"
+            # 重载后提示消失，footer 回到常驻文案
+            assert await _wait_until(
+                pilot, lambda: t("md.changed") not in str(footer.content), timeout=5.0
+            )
+            assert isinstance(app.screen, MarkdownPreviewScreen)
+
+    asyncio.run(scenario())
+
+
 def test_link_click_does_not_navigate(tmp_path):
     app = _app(tmp_path)
     absolute = str((tmp_path / "notes.md").resolve())
