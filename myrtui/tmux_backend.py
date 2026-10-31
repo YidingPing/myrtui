@@ -11,10 +11,13 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
+import socket
 import subprocess
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 
 from myrtui.i18n import t
 
@@ -149,6 +152,52 @@ class TmuxBackend:
         return proc
 
     # ---------- 生命周期 ----------
+
+    def socket_path(self) -> Path:
+        """本实例 tmux server socket 的路径（``-L`` 的落点）。
+
+        规则（tmux 3.8 实测）：``${TMUX_TMPDIR:-/tmp}/tmux-<uid>/<socket>``。
+        tmux **不读** ``$TMPDIR``——本机 ``$TMPDIR`` 指向 /var/folders/…，
+        而 ``#{socket_path}`` 给出 ``/private/tmp/tmux-501/…``；只认
+        ``TMUX_TMPDIR``。测试里改 ``TMUX_TMPDIR`` 也验证过同一条规则。
+
+        只给「server 是否还可能活着」的探测用（``server_listening``）；
+        ``_base()`` 继续走 ``-L``，不在两处各维护一份路径规则。
+        """
+        base = os.environ.get("TMUX_TMPDIR") or "/tmp"
+        return Path(base) / f"tmux-{os.getuid()}" / self.socket
+
+    def server_listening(self) -> bool | None:
+        """server socket 上是否有人监听：``True`` / ``False`` / ``None``（判不出）。
+
+        比 ``has_session()`` 便宜三个数量级：残留 socket 逐个 ``connect``
+        全探一遍 0.01 s，逐个 fork ``tmux has-session`` 是 4.98 s（2026-10-31
+        本机 1094 个 socket / 1005 个锁实测）。``myrtui ls`` 因此不必为
+        历史上打开过的每个项目付一次进程启动。
+
+        只有「文件不存在」与「连接被拒」算 ``False``（内核说没人 listen）；
+        超时 / ``EAGAIN`` / 非 socket 文件等一律 ``None``，调用方退回
+        ``has_session()``——宁可多 fork 一次，也不能把活着的 detached
+        会话报成 dead（``Instance.alive`` 直接决定 attach/stop 的判据）。
+        """
+        try:
+            path = self.socket_path()
+            if not path.exists():
+                return False
+        except OSError:
+            return None  # 路径过长 / 权限异常：交给 tmux 自己判
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(0.2)
+        try:
+            sock.connect(str(path))
+        except (FileNotFoundError, ConnectionRefusedError):
+            return False  # 残留 socket 文件：server 已退出
+        except OSError:
+            return None
+        else:
+            return True
+        finally:
+            sock.close()
 
     def has_session(self) -> bool:
         proc = self._run(["has-session", "-t", self.session], check=False)

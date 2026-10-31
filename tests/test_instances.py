@@ -13,8 +13,10 @@ import asyncio
 import json
 import os
 import shutil
+import socket
 import threading
 import time
+import uuid
 
 import pytest
 
@@ -195,6 +197,74 @@ def test_scan_states_running_detached_dead(data_dir, tmp_path):
         assert by_digest["dead000000000000"].state == instances.STATE_DEAD
     finally:
         os.close(holder)
+        backend.kill_server()
+        time.sleep(0.2)
+
+
+def test_scan_dead_locks_never_fork_tmux(data_dir, tmp_path, monkeypatch):
+    """残留锁（socket 文件不在）必须零 fork —— 0.5.2 的 `list` 提速判据。
+
+    锁文件只增不减，``scan_instances`` 曾对每个锁无条件 ``tmux has-session``：
+    2026-10-31 本机 1005 个锁 → 4.98 s。断言的是**调用次数**而不是耗时，
+    所以不会变成时间类脆弱用例。
+    """
+    digests = []
+    for _ in range(50):
+        digest = uuid.uuid4().hex
+        digests.append(digest)
+        _make_lock(digest, 111, str(tmp_path / digest))
+
+    forked: list[str] = []
+
+    def _no_fork(self):  # noqa: ANN001 —— 测试替身
+        forked.append(self.socket)
+        return False
+
+    monkeypatch.setattr(instances.TmuxBackend, "has_session", _no_fork)
+    by_digest = {i.digest: i for i in instances.scan_instances()}
+
+    assert sorted(by_digest) == sorted(digests)
+    assert all(i.state == instances.STATE_DEAD for i in by_digest.values())
+    assert forked == [], "socket 文件不存在时不得 fork tmux"
+
+
+def test_stale_socket_file_is_dead_without_fork(data_dir, monkeypatch):
+    """只有 socket 文件、没人监听 → DEAD，且不 fork tmux。
+
+    ``kill-server`` 一般会删掉 socket；中断/崩溃留下的文件才是 ``list``
+    变慢的主因，所以这里手工造一个「bind 后直接 close」的残留 socket。
+    """
+    digest = uuid.uuid4().hex
+    _make_lock(digest, 111, "/gone/proj")
+    backend = _session_backend(digest)
+    path = backend.socket_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.bind(str(path))
+    sock.close()  # 文件留下，监听者消失
+
+    def _fail(self):  # noqa: ANN001 —— 测试替身
+        raise AssertionError("残留 socket 不应 fork tmux")
+
+    monkeypatch.setattr(instances.TmuxBackend, "has_session", _fail)
+    try:
+        assert backend.server_listening() is False
+        assert instances._has_session(digest) is False
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def test_server_listening_true_for_live_session(data_dir, tmp_path):
+    """活着的 server → ``server_listening()`` 为 True（探测不能误判成 dead）。"""
+    digest = uuid.uuid4().hex
+    root = str(tmp_path / "live-proj")
+    os.makedirs(root)
+    backend = _session_backend(digest)
+    backend.create_session(root, 80, 24)
+    try:
+        assert backend.server_listening() is True
+        assert instances._has_session(digest) is True
+    finally:
         backend.kill_server()
         time.sleep(0.2)
 

@@ -8,7 +8,9 @@
 - 扫描 ``user_data_dir/*.lock``，三态判定：``running``（flock 被持 = 前台）、
   ``detached``（锁空闲但 tmux 会话存活）、``dead``（仅残留锁文件）。
   flock 判定走 ``cli.probe_lock_held`` 专用路径，**不写 holder record**
-  （评审 M6/R3）；
+  （评审 M6/R3）；会话存活先探 socket（``server_listening``，连接被拒即判死），
+  只有真有 server 监听才 fork ``tmux has-session``——锁文件只增不减，
+  上千个历史锁逐个 fork 会拖到秒级（0.5.2 本机 1005 锁 4.98 s → 0.15 s）；
 - 排序键 ``(root, hash)``、**序号只在存活集内分配**（评审 R1 + R4 拍板）；
   ``attach``/``stop`` 不缓存 ``ls`` 结果，重新扫描后按同一规则解析；
   dead 行默认不显示（``--all`` 才显示，且不占序号）；
@@ -73,8 +75,18 @@ class Instance:
 
 
 def _has_session(digest: str) -> bool:
+    """会话是否存活；先探 socket，避免为每个历史锁 fork 一次 tmux。
+
+    ``myrtui ls`` 要为**所有**残留锁判一次（锁文件永不 unlink，只增不减），
+    2026-10-31 本机 1005 个锁 → 4.98 s，全是 ``tmux has-session`` 的进程启动。
+    ``server_listening()`` 用 ``connect`` 秒判大部分死锁；只有真有 server
+    监听时才问 tmux（同一个 socket 上还要确认会话名，不能只看端口）。
+    """
     name = f"{cli.APP_NAME}-{digest}"
-    return TmuxBackend(name, name).has_session()
+    backend = TmuxBackend(name, name)
+    if backend.server_listening() is False:
+        return False
+    return backend.has_session()
 
 
 def scan_instances() -> list[Instance]:
