@@ -1,6 +1,6 @@
 [project]
 name = "myrtui"
-version = "0.5.2"
+version = "0.5.3"
 description = "Lightweight per-project terminal workspace: file tree + git log + up to 4 real tmux panes, in Textual"
 readme = "README.md"
 requires-python = ">=3.10"
