@@ -717,11 +717,12 @@ def test_close_pane_confirmed_after_pane_vanished(backend, app_root):
     asyncio.run(scenario())
 
 
-def test_close_busy_reason_three_shapes(backend, app_root):
-    """`_close_busy_reason` 的三种返回值（纯读缓存，不启 App）。
+def test_close_busy_message_shapes(backend, app_root):
+    """`_close_busy_message` 的两种返回值（纯读缓存，不启 App）。
 
-    ``None`` = 空闲、``""`` = 忙但不知道在跑什么、非空 = 忙且知道命令名。
-    这个形状不对称，是最容易被后来者改错的一处，所以单独立一条。
+    ``None`` = 空闲可直关；非空 = 确认框正文（知道命令名就带上，不知道用
+    unknown 文案）。**判定与文案在同一个函数里**，所以这里断言的是调用方
+    真正会显示的东西——拼装没有中间态，也就没有「拼错但没测到」的缝隙。
     """
     app = _make_app(backend, app_root)
     app._shell_names = {"zsh"}
@@ -729,19 +730,31 @@ def test_close_busy_reason_three_shapes(backend, app_root):
     app._alt_screens = {}
     app._dead = {}
 
-    assert app._close_busy_reason("p1") is None, "停在提示符 → 直接关"
+    assert app._close_busy_message("p1") is None, "停在提示符 → 直接关"
     app._commands["p1"] = ""
-    assert app._close_busy_reason("p1") == "", "缓存空 → 按忙处理（不知道在跑什么）"
+    assert app._close_busy_message("p1") == t("app.close_confirm_busy_unknown"), (
+        "缓存空 → 按忙处理（不知道在跑什么）"
+    )
     app._commands["p1"] = "vim"
-    assert app._close_busy_reason("p1") == "vim"
+    assert app._close_busy_message("p1") == t("app.close_confirm_busy", command="vim")
     app._commands["p1"] = "/usr/local/bin/vim"
-    assert app._close_busy_reason("p1") == "vim", "展示用 basename，框里放得下"
+    assert app._close_busy_message("p1") == t("app.close_confirm_busy", command="vim"), (
+        "展示用 basename，框里放得下"
+    )
     app._alt_screens["p1"] = True
-    assert app._close_busy_reason("p1") == "vim", "全屏程序也带着命令名"
+    assert app._close_busy_message("p1") == t("app.close_confirm_busy", command="vim"), (
+        "全屏程序也带着命令名"
+    )
     app._commands["p1"] = ""
-    assert app._close_busy_reason("p1") == "", "全屏但拿不到命令名"
+    assert app._close_busy_message("p1") == t("app.close_confirm_busy_unknown"), (
+        "全屏但拿不到命令名"
+    )
+    app._commands["p1"] = "zsh"
+    assert app._close_busy_message("p1") == t("app.close_confirm_busy", command="zsh"), (
+        "全屏时命令名像 shell 也照样问（alt screen 优先于白名单）"
+    )
     app._dead["p1"] = True
-    assert app._close_busy_reason("p1") is None, "dead pane 没有可丢的东西"
+    assert app._close_busy_message("p1") is None, "dead pane 没有可丢的东西"
 
 
 def test_app_key_routes_to_active_pane(backend, app_root):

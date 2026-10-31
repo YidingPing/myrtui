@@ -2587,18 +2587,21 @@ class TerminalApp(App, inherit_bindings=False):
         # B1 §3.2-7：tmux 动作 + list-panes 在线程段，拓扑/焦点在循环段
         self._submit_job(fetch, apply=apply, label=t("app.job.new_window"))
 
-    def _close_busy_reason(self, pane_id: str) -> str | None:
-        """pane 里是否有程序在前台（关掉会丢东西）；返回可展示的命令名。
+    def _close_busy_message(self, pane_id: str) -> str | None:
+        """确认框正文：``None`` = 空闲可直关，非空 = 忙，把它原样交给确认框。
 
-        三种返回值，形状不对称但每个都有含义：
+        **判定与文案放在同一个函数里**，调用方只剩一次 ``is None``。v0.5.4 初版
+        让这里返回「命令名 / ``""`` / ``None``」三态、由调用方用 ``if busy`` 拼文案，
+        那是一个测试覆盖不到的中间态（把 ``if busy`` 写成 ``if busy is not None``，
+        所有用例照绿）。三态在这里就塌成两种：知道在跑什么 → 带命令名；
+        不知道 → unknown 文案。
 
-        - ``None`` —— 空闲（停在 shell 提示符，或 pane 已 dead 没东西可丢）→ 直接关；
-        - ``""`` —— **忙但不知道在跑什么**（poll 缓存还是空的）→ 弹「不知道是谁」的框；
-        - 非空字符串 —— 忙，且知道命令名（``vim`` / ``sleep`` / …）→ 框里带上它。
-
-        「命令为空按忙处理」是刻意的：pane 刚建好的第一个 tick 之前
-        ``pane_current_command`` 还没进缓存，把它当空闲 = 在最危险的一瞬间
-        （刚启动的编译、刚 ``ssh`` 进去）静默强杀。宁可多问一次。
+        「命令为空按忙处理」是刻意的：tmux 极少数情况下会报空
+        （进程刚被 reap、负载极重），把它当空闲的代价是**静默强杀**，
+        当忙的代价只是多问一次。**这条不是为「刚建好的 pane」准备的**——
+        2026-10-31 实测 4/4：``new-window`` 返回时 shell 已经 spawn 完，
+        同一个 job 里的 ``list-panes`` 直接报 ``zsh``，第一个
+        ``_topology_apply`` 写进缓存的就是 ``zsh``，没有空窗口。
 
         读的都是每 tick 的 poll 缓存（``_commands`` / ``_alt_screens`` / ``_dead``），
         **不需要任何 tmux 调用**，UI 线程仍是 O(1)，且与「打开到当前 pane」的占用
@@ -2611,13 +2614,13 @@ class TerminalApp(App, inherit_bindings=False):
         # 白名单只认 basename（tmux 偶尔给完整路径），展示也用 basename——
         # 确认框一行放不下 `/opt/homebrew/bin/…`，用户认的也是最后那一段。
         base = _os.path.basename(command) if command else ""
-        if self._alt_screens.get(pane_id):
-            return base  # 全屏程序：命令名常常就是它；拿不到也照样问
         if not base:
-            return ""
-        if base.lstrip("-").lower() in self._shell_names:
-            return None
-        return base
+            return t("app.close_confirm_busy_unknown")
+        if not self._alt_screens.get(pane_id) and (
+            base.lstrip("-").lower() in self._shell_names
+        ):
+            return None  # 停在提示符（全屏程序即使命令名像 shell 也照样问）
+        return t("app.close_confirm_busy", command=base)
 
     def action_close_pane(self) -> None:
         """Ctrl-a w：关闭当前 pane（kill-window）。
@@ -2635,15 +2638,10 @@ class TerminalApp(App, inherit_bindings=False):
         window_id = self._window_ids.get(pid)
         if window_id is None:
             return
-        busy = self._close_busy_reason(pid)
-        if busy is None:
+        message = self._close_busy_message(pid)
+        if message is None:
             self._close_pane_now(window_id)
             return
-        message = (
-            t("app.close_confirm_busy", command=busy)
-            if busy
-            else t("app.close_confirm_busy_unknown")
-        )
 
         def confirmed(ok: bool | None) -> None:
             if not ok:
