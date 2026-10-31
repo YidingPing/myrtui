@@ -21,10 +21,18 @@
 - **跟随外部改动**（v0.53）：``sync_status`` 在配色之外，只对「行集合真的变了」
   的路径重扫最近的已加载祖先目录。App 之外发生的改动（AI 写文件、``git checkout``、
   外部编辑器保存）此前没有任何触发源，树会一直显示旧内容。
+- **跟随磁盘**（0.5.5）：``sync_status`` 只有一个信号源——git 快照，而 git 看不见
+  被 ``.gitignore`` 忽略的目录、嵌套仓内部、非仓库目录，那些路径的新建 / 删除
+  永远不会出现在快照里，结构刷新再聪明也拿不到候选。``scan_dirs`` +
+  ``sync_dirs`` 补上第二条**文件系统信号**：每轮刷新同时扫一遍**已加载**目录的
+  这一层，只比 ``(名字, 是否目录)``。两条信号分工写死：``sync_status`` 配色，
+  ``sync_dirs`` 只动结构、不参与配色。
 """
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Iterable
 
@@ -55,6 +63,67 @@ LABEL_OFFSET = 2
 # 一轮外部刷新最多重扫的目录数（v0.53）。一次 ``rm -rf`` 会让每个消失的路径
 # 都指向一个要重扫的目录；超过这个数就只处理最浅的那些，其余留到下一轮。
 MAX_EXTERNAL_DIRS = 16
+
+# 单个目录的扫描项数上限（0.5.5）。``node_modules`` / ``.venv`` 这类几万项的
+# 目录每 3 s 扫一次不可接受；超过就整条跳过，交给右键「刷新此目录」。
+MAX_SCAN_ENTRIES = 2000
+
+log = logging.getLogger(__name__)
+
+
+def _visible(name: str) -> bool:
+    """目录项是否进树：唯一硬排除 ``.git``（``filter_paths`` 与 ``scan_dirs`` 共用）。
+
+    过滤规则**只能有一份**：扫描侧若自己放过 ``.git``，每 3 s 都会「发现」一个
+    新条目，于是每个已展开目录每轮都判不等、都重扫一遍——正是 0.5.5 要消灭的
+    抖动。将来放宽排除项也只改这一个函数。
+    """
+    return name != ".git"
+
+
+def scan_dirs(targets: list[tuple[str, Path]]) -> dict[str, set[tuple[str, bool]]]:
+    """扫**一层**目录，返回 ``{相对路径: {(名字, 是否目录)}}``；只扫盘，不碰树。
+
+    ``targets`` 来自 ``FileTree.scan_targets()``（已加载目录）。本函数是纯数据的
+    **线程段**：由 ``asyncio.to_thread`` 调用，绝不碰 Textual——网络盘上的
+    ``scandir`` 落在事件循环上就是整屏卡死（见 ``Sidebar`` 的三拍拆分）。
+
+    **带 ``is_dir`` 而不是纯名字**：``entry.is_dir()`` 在 ``scandir`` 里是白拿的，
+    但能覆盖「``foo`` 文件被换成 ``foo/`` 目录」——纯名字集不变时那一行会永远停在
+    错的状态（选中它还会按文件处理）。
+
+    ``follow_symlinks=True``（``scandir`` 的默认值）**必须保留**：树判定目录用的是
+    ``path.is_dir()``（跟随软链），两边口径不一致会让「指向目录的软链」永判不等
+    → 每 3 s 重扫一遍。
+
+    单目录项数超过 ``MAX_SCAN_ENTRIES`` 的**整条跳过**并记 ``log.debug``；单个目录
+    ``OSError``（扫描中途被删 / 权限不足 / 已不是目录）同样跳过，不抛。不递归：
+    懒加载口径不变，只扫传进来的这一层。
+    """
+    scanned: dict[str, set[tuple[str, bool]]] = {}
+    for relative, path in targets:
+        entries: set[tuple[str, bool]] = set()
+        capped = False
+        try:
+            with os.scandir(path) as iterator:
+                for entry in iterator:
+                    if not _visible(entry.name):
+                        continue
+                    if len(entries) >= MAX_SCAN_ENTRIES:
+                        capped = True
+                        break
+                    entries.add((entry.name, entry.is_dir()))
+        except OSError:
+            continue  # 目录没了 / 权限：这一层跳过，其它目录照常
+        if capped:
+            log.debug(
+                "scan_dirs: %s 超过 %d 项，跳过（用「刷新此目录」手动刷新）",
+                relative or ".",
+                MAX_SCAN_ENTRIES,
+            )
+            continue
+        scanned[relative] = entries
+    return scanned
 
 
 class FileTree(DirectoryTree):
@@ -216,6 +285,84 @@ class FileTree(DirectoryTree):
         self.set_status_map(status)
         self._refresh_structure(previous, status, self._loaded_nodes())
         return True
+
+    # ---------- 外部改动（0.5.5：第二条信号——文件系统） ----------
+
+    def scan_targets(self) -> list[tuple[str, Path]]:
+        """这一轮要扫的已加载目录：``[(相对路径, 文件系统路径)]``（根是 ``""``）。
+
+        只读内存，不做任何系统调用。**根也必须在内**，否则「不是仓库的目录」顶层
+        新建的文件永远发现不了。
+
+        首挂载那一帧 ``root.data.loaded`` 可能还没被 ``_add_to_load_queue`` 置位，
+        该轮 ``targets`` 为空、自然空转，下一轮自愈——**不特判**（别当 bug 补）。
+
+        只认 ``loaded``：文件节点恒为 ``False``（``_populate_node`` 建的是
+        ``DirEntry(path)``），收起但**已加载**的目录仍要扫——它们同样得发现变化，
+        只是处理方式是「标脏」而不是重扫。
+        """
+        return [
+            (relative, Path(node.data.path))
+            for relative, node in self._loaded_nodes().items()
+            if node.data is not None and node.data.loaded
+        ]
+
+    def sync_dirs(self, scanned: dict[str, set[tuple[str, bool]]]) -> bool:
+        """把一次磁盘扫描结果合进树：**只增删行，不参与配色**；返回是否动过结构。
+
+        配色与结构是两条独立信号：``sync_status`` 负责颜色（快照逻辑一字不改），
+        本方法只回答「内存里的子项集合和磁盘一致吗」——git 看不见的路径（忽略
+        目录、嵌套仓内部、非仓库目录）由它兜住。
+
+        规则沿用 0.5.3 的 ``_refresh_structure``：
+
+        - 集合相等 → **什么也不做**（连节点对象都不碰，防闪烁）；
+        - 已展开 → ``reload_node``；已加载但收起 → 只置 ``data.loaded = False``
+          （``_add_to_load_queue`` 只看这个字段，下次展开自然重读盘），**绝不**
+          ``expand()``——8.2.8 的 ``_reload`` 会无条件展开目标节点；
+        - **绝不**全树 ``reload()``：那条兜底会把整棵已展开子树重读一遍，还把滚动
+          位置拽回光标行。
+
+        **前提假设**：子节点都由 ``_populate_node`` 建立、必带 ``data``，且
+        ``allow_expand`` 就是当年 ``_safe_is_dir()`` 的结果——所以内存侧的
+        ``(名字, 是否目录)`` 零系统调用即可得到，与扫描侧口径一致。**子节点必须
+        带 ``data``，否则判等失效**：将来若有人往树上塞无 ``data`` 的节点，两侧
+        集合会每 3 s 永不相等 → 每轮重扫，正是本机制要避免的抖动。
+        """
+        # 扫描期间用户可能展开 / 收起：重新取一次索引（不能用扫描前那份）。
+        loaded = self._loaded_nodes()
+        changed: list[str] = []
+        for relative, disk in scanned.items():
+            node = loaded.get(relative)
+            if node is None or node.data is None or not node.data.loaded:
+                continue  # 已不在树上 / 已被标脏：用户展开时自然会读盘
+            memory = {
+                (child.data.path.name, child.allow_expand)
+                for child in node.children
+                if child.data is not None
+            }
+            if memory != disk:
+                changed.append(relative)
+
+        # 祖先动过就不必再动子孙：``reload_node`` 会把展开的子树一起重读。这条
+        # 去重既省一轮工作，也避免对父节点已经重建掉的旧节点对象动手。
+        changed.sort(key=lambda key: key.count("/"))
+        done: list[str] = []
+        for relative in changed:
+            if any(
+                relative == parent or relative.startswith(parent + "/")
+                for parent in done
+            ):
+                continue
+            node = loaded[relative]
+            done.append(relative)
+            if node.is_expanded:
+                self.reload_node(node)
+            elif node.data is not None:
+                node.data.loaded = False  # 收起：标脏，展开时再读
+        if done:
+            self._rel_cache.clear()  # 与 reload_path / _refresh_structure 同一约定
+        return bool(done)
 
     def _refresh_structure(
         self,
@@ -407,9 +554,10 @@ class FileTree(DirectoryTree):
         """唯一硬排除：``.git``（git 的内部数据库，对浏览项目文件无意义）。
 
         其余一律保留——``.gitignore`` / ``node_modules`` / ``.venv`` 等都列出
-        （靠**懒加载**控制体量，而不是靠过滤；过滤规则将来只改这一处）。
+        （靠**懒加载**控制体量，而不是靠过滤；过滤规则将来只改 ``_visible``
+        这一处，``scan_dirs`` 与这里共用同一条规则）。
         """
-        return (p for p in paths if p.name != ".git")
+        return (p for p in paths if _visible(p.name))
 
     # ---------- 选中行为 ----------
 

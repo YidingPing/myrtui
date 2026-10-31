@@ -157,8 +157,11 @@ their children (added wins over modified). Status refreshes every 3 s in a
 worker thread (`git status --porcelain -z -uall`), and that same poll keeps the
 tree honest about the disk: files created or deleted outside the app appear or
 disappear within one interval, without expanding or collapsing anything you
-already opened. Paths git cannot see (ignored files, a directory outside any
-repository) are only refreshed manually.
+already opened. The tree follows the disk itself, not just git: paths git cannot
+see — ignored directories, the inside of a nested repository, a directory that
+is not in any repository — are picked up the same way. Only `.git` is excluded.
+A single directory with more than 2000 entries is skipped to keep the poll
+cheap; use **Refresh this directory** there.
 
 **Context menu** (right click, or `Enter` on a file row / `Space` on any row):
 

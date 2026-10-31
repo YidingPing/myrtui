@@ -6,7 +6,8 @@ v0.30 的目录右键菜单有两半：上传（v0.34 整体移除，见
 - 菜单结构：文件行不含目录动作，目录行含 ``refresh_dir``；
 - 刷新语义：新增文件可见、其它展开与光标保持、根节点、目录被删刷父目录、
   节点不在树里走全树兜底；
-- 刷新不碰 Git 历史目标、不调用 tmux 后端。
+- 刷新不碰 Git 历史目标、不调用 tmux 后端；
+- 外部改动（v0.53 的 git 快照 + 0.5.5 的扫盘信号）按「行集合变没变」落到树上。
 """
 from __future__ import annotations
 
@@ -17,7 +18,8 @@ from pathlib import Path
 from textual.widgets import OptionList
 
 from myrtui.client.app import MainScreen, TerminalApp
-from myrtui.client.file_tree import FileTree
+from myrtui.client.file_tree import MAX_SCAN_ENTRIES, FileTree, scan_dirs
+from myrtui.client.sidebar import Sidebar
 from myrtui.tmux_backend import CaptureResult, PaneInfo
 
 
@@ -443,5 +445,353 @@ def test_sync_status_works_behind_a_symlinked_root(tmp_path):
 
             assert "a.txt" not in _tree_lines(tree)
             assert "b.txt" not in _tree_lines(tree)
+
+    asyncio.run(scenario())
+
+
+# ---------- 扫盘信号（0.5.5：忽略目录 / 嵌套仓 / 非仓库目录） ----------
+#
+# 0.5.3 的结构刷新只有 git 快照一个信号源，而 ``git status`` 对 ignore 目录只给
+# 一行 ``!! dir/``（``parse_file_status`` 还直接跳过），对嵌套仓只给 ``?? sub/``
+# ——里面新加了什么永远不知道。这里守第二条信号：每轮 ``scan_dirs``（线程，纯数据）
+# → ``sync_dirs``（事件循环，只增删行，不配色）。
+
+
+def _sync_now(tree: FileTree) -> bool:
+    """跑一轮「扫盘 → 合树」，等价于 worker 里那两拍（测试同步驱动）。"""
+    return tree.sync_dirs(scan_dirs(tree.scan_targets()))
+
+
+async def _wait_until(pilot, predicate, timeout: float = 3.0) -> bool:
+    """轮询到条件成立（Textual 时序不确定，固定 sleep 会抖，见 tests/README.md）。"""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        if predicate():
+            return True
+        await pilot.pause(0.05)
+    return predicate()
+
+
+# ----- 纯函数级 -----
+
+
+def test_scan_dirs_reports_name_and_kind(tmp_path):
+    """一行一个 ``(名字, 是否目录)``：普通文件、目录、空目录、指向目录的软链。"""
+    root = tmp_path / "d"
+    root.mkdir()
+    (root / "file.txt").write_text("x\n")
+    (root / "sub").mkdir()
+    (root / "empty").mkdir()
+    (root / "link").symlink_to(root / "sub", target_is_directory=True)
+
+    assert scan_dirs([("", root)]) == {
+        "": {
+            ("file.txt", False),
+            ("sub", True),
+            ("empty", True),
+            ("link", True),  # follow_symlinks=True：与树的 _safe_is_dir 同口径
+        }
+    }
+
+
+def test_scan_dirs_skips_dot_git(tmp_path):
+    """``.git`` 不进结果——与 ``filter_paths`` 共用 ``_visible`` 那一条规则。"""
+    root = tmp_path / "d"
+    (root / ".git").mkdir(parents=True)
+    (root / ".git" / "index").write_text("x")
+    (root / "a.txt").write_text("a\n")
+
+    assert scan_dirs([("", root)]) == {"": {("a.txt", False)}}
+
+
+def test_scan_dirs_respects_entry_cap(tmp_path):
+    """项数超过 ``MAX_SCAN_ENTRIES`` → 整条目录不返回（跳过，交给手动刷新）。"""
+    root = tmp_path / "big"
+    root.mkdir()
+    for index in range(MAX_SCAN_ENTRIES + 1):
+        (root / f"f{index}").write_text("")
+
+    assert scan_dirs([("big", root)]) == {}
+
+
+def test_scan_dirs_survives_missing_dir(tmp_path):
+    """目录在扫描前被删 / 已不是目录 → 跳过该目录，不抛。"""
+    (tmp_path / "a-file").write_text("x\n")
+    assert scan_dirs([("gone", tmp_path / "gone")]) == {}
+    assert scan_dirs([("a-file", tmp_path / "a-file")]) == {}
+
+
+# ----- 树级 -----
+
+
+def test_sync_dirs_adds_file_in_ignored_dir(tmp_path):
+    """git 看不见的目录里新建文件 → 行出现，其它展开与光标保持。"""
+    app = _make_app(tmp_path)
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.5)
+            tree = app.query_one(FileTree)
+            _forbid_full_reload(tree)
+            root = tmp_path / "proj"
+
+            # 目录第一眼是新的：根那一轮先把它加进来
+            ignored = root / "docs-internal"
+            ignored.mkdir()
+            (ignored / "a.md").write_text("a\n")
+            _sync_now(tree)
+            assert await _wait_until(pilot, lambda: "docs-internal" in _tree_lines(tree))
+
+            _node(tree, "docs-internal").expand()
+            _node(tree, "sib").expand()
+            await pilot.pause(0.4)
+            tree.cursor_line = _tree_lines(tree).index("c.txt")
+
+            # 忽略目录内部的变化：git 快照里什么都没有，只有扫盘看得见
+            (ignored / "b.md").write_text("b\n")
+            _sync_now(tree)
+
+            assert await _wait_until(pilot, lambda: "b.md" in _tree_lines(tree))
+            assert _node(tree, "docs-internal").is_expanded
+            assert _node(tree, "sib").is_expanded
+            assert tree.cursor_node is not None
+            assert tree.cursor_node.data.path.name == "c.txt"
+
+    asyncio.run(scenario())
+
+
+def test_sync_dirs_drops_deleted_file(tmp_path):
+    """删掉的行消失；目录本身不被弹开或收起。"""
+    app = _make_app(tmp_path)
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.5)
+            tree = app.query_one(FileTree)
+            _forbid_full_reload(tree)
+            _node(tree, "sub").expand()
+            await pilot.pause(0.4)
+            assert "b.txt" in _tree_lines(tree)
+
+            (tmp_path / "proj" / "sub" / "b.txt").unlink()
+            _sync_now(tree)
+
+            assert await _wait_until(pilot, lambda: "b.txt" not in _tree_lines(tree))
+            assert _node(tree, "sub").is_expanded
+
+    asyncio.run(scenario())
+
+
+def test_sync_dirs_renames_row(tmp_path):
+    """改名 = 旧行消失 + 新行出现（集合判等的自然结果）。"""
+    app = _make_app(tmp_path)
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.5)
+            tree = app.query_one(FileTree)
+            _forbid_full_reload(tree)
+            assert "a.txt" in _tree_lines(tree)
+
+            (tmp_path / "proj" / "a.txt").rename(tmp_path / "proj" / "renamed.txt")
+            _sync_now(tree)
+
+            assert await _wait_until(
+                pilot,
+                lambda: "renamed.txt" in _tree_lines(tree)
+                and "a.txt" not in _tree_lines(tree),
+            )
+
+    asyncio.run(scenario())
+
+
+def test_sync_dirs_file_replaced_by_dir(tmp_path):
+    """同名换型必须跟变：``(name, is_dir)`` 而不是纯名字集。
+
+    纯名字集会判等（名字没变）→ 那一行永远停在错的状态，菜单还会按文件处理。
+    行是否目录由 ``allow_expand`` 决定（菜单的 ``is_dir`` 就是它）。
+    """
+    app = _make_app(tmp_path)
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.5)
+            tree = app.query_one(FileTree)
+            _forbid_full_reload(tree)
+            root = tmp_path / "proj"
+
+            (root / "foo").write_text("x\n")
+            _sync_now(tree)
+            assert await _wait_until(pilot, lambda: "foo" in _tree_lines(tree))
+            assert _node(tree, "foo").allow_expand is False
+
+            (root / "foo").unlink()
+            (root / "foo").mkdir()
+            _sync_now(tree)
+            assert await _wait_until(
+                pilot, lambda: _node(tree, "foo").allow_expand is True
+            )
+
+            # 反向：目录 → 同名文件
+            (root / "foo").rmdir()
+            (root / "foo").write_text("y\n")
+            _sync_now(tree)
+            assert await _wait_until(
+                pilot, lambda: _node(tree, "foo").allow_expand is False
+            )
+
+    asyncio.run(scenario())
+
+
+def test_sync_dirs_collapsed_dir_is_marked_stale_not_expanded(tmp_path):
+    """收起但已加载的目录：不弹开、只标脏；用户展开时再读到新文件。"""
+    app = _make_app(tmp_path)
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.5)
+            tree = app.query_one(FileTree)
+            _forbid_full_reload(tree)
+            _node(tree, "sib").expand()
+            await pilot.pause(0.3)
+            _node(tree, "sib").collapse()
+            await pilot.pause(0.2)
+            assert not _node(tree, "sib").is_expanded
+
+            (tmp_path / "proj" / "sib" / "later.txt").write_text("x\n")
+            _sync_now(tree)
+
+            assert await _wait_until(
+                pilot, lambda: _node(tree, "sib").data.loaded is False
+            )
+            assert not _node(tree, "sib").is_expanded  # 没被弹开
+            assert "later.txt" not in _tree_lines(tree)
+
+            _node(tree, "sib").expand()
+            assert await _wait_until(pilot, lambda: "later.txt" in _tree_lines(tree))
+
+    asyncio.run(scenario())
+
+
+def test_sync_dirs_no_change_is_a_noop(tmp_path):
+    """同一份快照连灌两次：第二次不动结构、节点对象同一（与防闪烁同口径）。"""
+    app = _make_app(tmp_path)
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.5)
+            tree = app.query_one(FileTree)
+            snapshot = scan_dirs(tree.scan_targets())
+            assert tree.sync_dirs(snapshot) is False
+
+            before = {relative: node for relative, node in tree._loaded_nodes().items()}
+
+            def _boom(_node):
+                raise AssertionError("没变化不该碰结构（reload_node）")
+
+            tree.reload_node = _boom
+            assert tree.sync_dirs(snapshot) is False
+            await pilot.pause(0.2)
+
+            after = {relative: node for relative, node in tree._loaded_nodes().items()}
+            assert before.keys() == after.keys()
+            assert all(before[key] is after[key] for key in before)
+
+    asyncio.run(scenario())
+
+
+def test_sync_dirs_never_reloads_the_whole_tree(tmp_path):
+    """外部改动只重扫目标目录，绝不走全树 ``reload()`` 兜底。"""
+    app = _make_app(tmp_path)
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.5)
+            tree = app.query_one(FileTree)
+            _forbid_full_reload(tree)
+
+            (tmp_path / "proj" / "top.txt").write_text("x\n")
+            _sync_now(tree)
+
+            assert await _wait_until(pilot, lambda: "top.txt" in _tree_lines(tree))
+
+    asyncio.run(scenario())
+
+
+def test_sync_dirs_skips_git_internals(tmp_path):
+    """.git 内部写入不算变化：既不出现行，也不触发任何重扫。"""
+    app = _make_app(tmp_path)
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.5)
+            tree = app.query_one(FileTree)
+            before = {relative: node for relative, node in tree._loaded_nodes().items()}
+
+            (tmp_path / "proj" / ".git").mkdir()
+            (tmp_path / "proj" / ".git" / "index").write_text("x")
+            assert _sync_now(tree) is False
+            await pilot.pause(0.2)
+
+            assert ".git" not in _tree_lines(tree)
+            after = {relative: node for relative, node in tree._loaded_nodes().items()}
+            assert all(before[key] is after[key] for key in before)
+
+    asyncio.run(scenario())
+
+
+# ----- App 级（走 Sidebar 的调用点） -----
+
+
+def test_sidebar_refresh_follows_disk_without_git(tmp_path, monkeypatch):
+    """git 不在 PATH 时照样跟随磁盘——钉住「拆掉 ``status != ok`` 早退」。"""
+    empty_bin = tmp_path / "empty-bin"
+    empty_bin.mkdir()
+    monkeypatch.setenv("PATH", str(empty_bin))
+    app = _make_app(tmp_path)
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.5)
+            sidebar = app.query_one(Sidebar)
+            tree = app.query_one(FileTree)
+            # 先确认 git 真的取不到（否则这条用例就没验到东西）
+            assert await _wait_until(
+                pilot, lambda: sidebar._git_status == "unavailable"
+            )
+
+            (tmp_path / "proj" / "nogit.txt").write_text("x\n")
+            sidebar._refresh_file_status_worker()  # worker 路径
+
+            assert await _wait_until(pilot, lambda: "nogit.txt" in _tree_lines(tree))
+
+    asyncio.run(scenario())
+
+
+def test_sidebar_refresh_ignored_dir_end_to_end(tmp_path):
+    """非仓库目录 + 被忽略目录：跑一轮同步刷新，忽略目录里的新文件出现。"""
+    root = tmp_path / "proj"
+    (root / "docs-internal").mkdir(parents=True)
+    (root / "docs-internal" / "a.md").write_text("a\n")
+    (root / "a.txt").write_text("a\n")
+    app = TerminalApp(_FakeBackend([_pane()]), str(root))
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.5)
+            sidebar = app.query_one(Sidebar)
+            tree = app.query_one(FileTree)
+            _forbid_full_reload(tree)
+
+            _node(tree, "docs-internal").expand()
+            await pilot.pause(0.4)
+            assert "a.md" in _tree_lines(tree)
+
+            (root / "docs-internal" / "b.md").write_text("b\n")
+            sidebar.refresh_data()  # 同步入口：分支 + 状态 + 扫盘
+
+            assert await _wait_until(pilot, lambda: "b.md" in _tree_lines(tree))
+            assert _node(tree, "docs-internal").is_expanded
 
     asyncio.run(scenario())

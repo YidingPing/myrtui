@@ -15,7 +15,9 @@
 - 刷新：分支 1s 一轮、**per-file 状态 3s 一轮**，都走 worker（git 是阻塞调用，
   放事件循环里每秒卡一次，P3 R3）。v0.53 起 per-file 这份状态表还驱动**文件树
   跟随外部改动**（新建 / 删除的行会落进树里，配色以外的事见
-  ``FileTree.sync_status``）。
+  ``FileTree.sync_status``）。0.5.5 起同一轮还多一条**文件系统信号**
+  （``scan_dirs`` → ``FileTree.sync_dirs``）：git 看不见的忽略目录 / 嵌套仓 /
+  非仓库目录也跟随磁盘，扫描在线程里跑，比对留在事件循环上。
 - **v0.11.3**：标题行 + 历史面板包进 ``#git-area`` 容器——聚焦 Git 面板时
   底色**只染下半区**（含标题行），与文件树各染各的半区（CSS 无法跨兄弟
   节点染色，需共同容器做 ``:focus-within`` 锚点；容器不改变布局）。
@@ -32,7 +34,7 @@ from textual.css.query import NoMatches
 from textual.widgets import Static
 
 from myrtui.client.cells import truncate_cells as _truncate_cells
-from myrtui.client.file_tree import FileTree
+from myrtui.client.file_tree import FileTree, scan_dirs
 from myrtui.client.git_panel import GitLogPanel
 from myrtui.client.separators import Separator
 from myrtui.gitstat import GitInfo, git_file_status, git_status
@@ -170,20 +172,34 @@ class Sidebar(Vertical):
         if not self.display:
             return
         status, files = await asyncio.to_thread(git_file_status, self.root)
-        tree = self._tree()
-        if tree is None or status != "ok":
+        tree = self._tree()  # 引用在第一个 await 之后取，避免首刷时控件未挂载
+        if tree is None:
             return
-        tree.sync_status(files)
+        if status == "ok":
+            tree.sync_status(files)  # 配色 + git 驱动的结构（不变）
+        # 第二条信号（0.5.5）：忽略目录 / 嵌套仓 / 非仓库目录只靠扫盘才看得见。
+        # 与 git 是否可用无关——这正是拆掉上面那道 ``status != "ok"`` 早退的原因。
+        # 扫描必须自己 ``to_thread``：比对要留在 loop 上，``scandir`` 不能进 UI 线程。
+        targets = tree.scan_targets()
+        if targets:
+            scanned = await asyncio.to_thread(scan_dirs, targets)
+            if self._tree() is tree:  # 第二个 await 期间控件可能已卸载
+                tree.sync_dirs(scanned)
 
     def refresh_file_status(self) -> None:
         """立即起一轮 per-file 状态刷新（异步；侧栏展开回来时调用）。"""
         self._refresh_file_status_worker()
 
     def _refresh_file_status(self) -> None:
-        """同步取一次 per-file 状态（测试用）。"""
+        """同步取一次 per-file 状态 + 扫盘（测试用）。
+
+        与 worker 入口**同构**：``sync_dirs`` 无条件执行，不关进 ``status == "ok"``
+        分支——非仓库目录 / ``git`` 不在 ``PATH`` 时同样跟随磁盘。
+        """
         tree = self._tree()
         if tree is None:
             return
         status, files = git_file_status(self.root)
         if status == "ok":
             tree.sync_status(files)
+        tree.sync_dirs(scan_dirs(tree.scan_targets()))
