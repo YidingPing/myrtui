@@ -250,3 +250,162 @@ def test_refresh_missing_node_falls_back(tmp_path):
             assert isinstance(app.screen, MainScreen)
 
     asyncio.run(scenario())
+
+
+# ---------- 外部改动（v0.53：树跟着磁盘走） ----------
+#
+# 这里直接喂 ``sync_status`` 的快照，不跑真 git：驱动这份快照的是
+# ``Sidebar._refresh_file_status_worker``（3 s 一轮），本文件只守「快照怎么变，
+# 树就怎么变」。所有断言落在**结构**上（行在不在、展开没展开、节点对象有没有被
+# 换掉），不写固定 sleep，也不用耗时判断。
+
+
+def _forbid_full_reload(tree: FileTree) -> None:
+    """把全树 ``reload()`` 换成炸弹：自动刷新一旦走兜底就立刻炸掉。"""
+
+    def _boom():
+        raise AssertionError("外部刷新不能触发全树 reload()")
+
+    tree.reload = _boom
+
+
+def test_sync_status_row_exists_does_not_touch_structure(tmp_path):
+    """行还在（只有状态码变）→ 只配色，节点对象与光标都不动。"""
+    app = _make_app(tmp_path)
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.5)
+            tree = app.query_one(FileTree)
+            _forbid_full_reload(tree)
+            sub_before = _node(tree, "sub")
+            tree.cursor_line = _tree_lines(tree).index("a.txt")
+            await pilot.pause(0.1)
+
+            assert tree.sync_status({"a.txt": "M"}) is True
+            await pilot.pause(0.3)
+
+            assert tree.sync_status({"a.txt": "M"}) is False  # 同一份快照：不动
+            await pilot.pause(0.2)
+
+            assert _node(tree, "sub") is sub_before  # 没有重扫重建
+            assert tree.cursor_node is not None
+            assert tree.cursor_node.data.path.name == "a.txt"
+            assert tree._status_map == {"a.txt": "M"}
+
+    asyncio.run(scenario())
+
+
+def test_sync_status_shows_new_file_in_expanded_dir(tmp_path):
+    """展开的目录里出现新文件 → 行出现，其它展开与光标保持。"""
+    app = _make_app(tmp_path)
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.5)
+            tree = app.query_one(FileTree)
+            _forbid_full_reload(tree)
+            _node(tree, "sub").expand()
+            _node(tree, "sib").expand()
+            await pilot.pause(0.4)
+            tree.cursor_line = _tree_lines(tree).index("b.txt")
+            await pilot.pause(0.1)
+
+            (tmp_path / "proj" / "sub" / "new.txt").write_text("new\n")
+            tree.sync_status({"sub/new.txt": "A"})
+            await pilot.pause(0.5)
+
+            assert "new.txt" in _tree_lines(tree)
+            assert _node(tree, "sub").is_expanded
+            assert _node(tree, "sib").is_expanded
+            assert "c.txt" in _tree_lines(tree)
+            assert tree.cursor_node is not None
+            assert tree.cursor_node.data.path.name == "b.txt"
+
+    asyncio.run(scenario())
+
+
+def test_sync_status_drops_deleted_row(tmp_path):
+    """上一份快照里有、这一份没有、磁盘上也没了 → 死行消失。"""
+    app = _make_app(tmp_path)
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.5)
+            tree = app.query_one(FileTree)
+            _forbid_full_reload(tree)
+            _node(tree, "sub").expand()
+            await pilot.pause(0.4)
+            assert "b.txt" in _tree_lines(tree)
+
+            tree.sync_status({"sub/b.txt": "M"})  # 行还在：只上色，结构不动
+            await pilot.pause(0.2)
+            assert "b.txt" in _tree_lines(tree)
+
+            (tmp_path / "proj" / "sub" / "b.txt").unlink()
+            tree.sync_status({"sub/b.txt": "D"})  # git 报删除
+            await pilot.pause(0.5)
+            assert "b.txt" not in _tree_lines(tree)
+            assert _node(tree, "sub").is_expanded
+
+            # 未跟踪文件被删：快照里整个键消失，靠「上一份 ∪ 这一份」才找得到
+            (tmp_path / "proj" / "sub" / "gone.txt").write_text("x\n")
+            tree.sync_status({"sub/gone.txt": "A"})
+            await pilot.pause(0.4)
+            assert "gone.txt" in _tree_lines(tree)
+            (tmp_path / "proj" / "sub" / "gone.txt").unlink()
+            tree.sync_status({})
+            await pilot.pause(0.5)
+            assert "gone.txt" not in _tree_lines(tree)
+
+    asyncio.run(scenario())
+
+
+def test_sync_status_never_expands_a_collapsed_dir(tmp_path):
+    """收起但已加载的目录只标脏，不弹开；用户展开时再读到新文件。"""
+    app = _make_app(tmp_path)
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.5)
+            tree = app.query_one(FileTree)
+            _forbid_full_reload(tree)
+            _node(tree, "sib").expand()
+            await pilot.pause(0.3)
+            _node(tree, "sib").collapse()
+            await pilot.pause(0.2)
+            sib = _node(tree, "sib")
+            assert not sib.is_expanded
+
+            (tmp_path / "proj" / "sib" / "later.txt").write_text("x\n")
+            tree.sync_status({"sib/later.txt": "A"})
+            await pilot.pause(0.4)
+
+            assert not _node(tree, "sib").is_expanded  # 没被弹开
+            assert _node(tree, "sib").data.loaded is False  # 标了脏
+            assert "later.txt" not in _tree_lines(tree)
+
+            # 用户自己展开 → 基类按 loaded=False 重读盘，新文件出现
+            _node(tree, "sib").expand()
+            await pilot.pause(0.6)
+            assert "later.txt" in _tree_lines(tree)
+
+    asyncio.run(scenario())
+
+
+def test_sync_status_root_level_new_file(tmp_path):
+    """顶层新文件：最近的已加载祖先就是根，根重扫即可（不走全树兜底）。"""
+    app = _make_app(tmp_path)
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.5)
+            tree = app.query_one(FileTree)
+            _forbid_full_reload(tree)
+            (tmp_path / "proj" / "top.txt").write_text("x\n")
+            tree.sync_status({"top.txt": "A"})
+            await pilot.pause(0.5)
+
+            assert "top.txt" in _tree_lines(tree)
+
+    asyncio.run(scenario())

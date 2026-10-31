@@ -154,7 +154,11 @@ directories are listed normally.
 **Git colours** follow VS Code: modified = gold, added/untracked = green,
 deleted = red, renamed = cyan, conflict = red; directories inherit the colour of
 their children (added wins over modified). Status refreshes every 3 s in a
-worker thread (`git status --porcelain -z -uall`).
+worker thread (`git status --porcelain -z -uall`), and that same poll keeps the
+tree honest about the disk: files created or deleted outside the app appear or
+disappear within one interval, without expanding or collapsing anything you
+already opened. Paths git cannot see (ignored files, a directory outside any
+repository) are only refreshed manually.
 
 **Context menu** (right click, or `Enter` on a file row / `Space` on any row):
 

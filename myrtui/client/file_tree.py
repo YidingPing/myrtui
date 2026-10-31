@@ -17,18 +17,24 @@
   文件行选中 + 弹菜单，``Space`` 任意行弹菜单）；双击仍只选中；
 - **git 状态配色**（v0.10）：``set_status_map`` 灌入 ``{相对路径: 状态码}``，
   ``render_label`` 按状态给文件名上色（VS Code 习惯：修改=金、新增/未跟踪=绿、
-  删除=红、重命名=青、冲突=红），**目录按子项继承颜色**。
+  删除=红、重命名=青、冲突=红），**目录按子项继承颜色**；
+- **跟随外部改动**（v0.53）：``sync_status`` 在配色之外，只对「行集合真的变了」
+  的路径重扫最近的已加载祖先目录。App 之外发生的改动（AI 写文件、``git checkout``、
+  外部编辑器保存）此前没有任何触发源，树会一直显示旧内容。
 """
 from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
 
 from rich.style import Style
 from textual import events
 from textual.message import Message
 from textual.widgets import DirectoryTree
+
+if TYPE_CHECKING:  # 仅类型：不引 Textual 的私有模块到运行期
+    from textual.widgets._tree import TreeNode
 
 # 状态 → 颜色（VS Code Dark+ 的 git decoration 近似值）。
 # 终端只支持 16 色时 Textual 会自动降到最接近的 ANSI 色。
@@ -45,6 +51,10 @@ STATUS_PRIORITY = {"U": 5, "A": 4, "M": 3, "D": 2, "R": 1}
 
 # 文件名在标签里的起始偏移：图标 ``▸ ``/``▾ ``/``· `` 恒占 2 cell。
 LABEL_OFFSET = 2
+
+# 一轮外部刷新最多重扫的目录数（v0.53）。一次 ``rm -rf`` 会让每个消失的路径
+# 都指向一个要重扫的目录；超过这个数就只处理最浅的那些，其余留到下一轮。
+MAX_EXTERNAL_DIRS = 16
 
 
 class FileTree(DirectoryTree):
@@ -131,6 +141,30 @@ class FileTree(DirectoryTree):
         层的 ``is_dir()`` 检查刷新父目录承接。只有节点真的不在树里（未加载 /
         竞态）才走全树 ``reload()`` 兜底并返回 ``False``。
         """
+        node = self.find_loaded(relative)
+        if node is None:
+            self.reload()
+            self._rel_cache.clear()
+            return False
+        self.reload_node(node)
+        self._rel_cache.clear()
+        return True
+
+    def find_loaded(self, relative: str) -> "TreeNode | None":
+        """静默查找**已在内存树里**的节点；找不到返回 ``None``。
+
+        只遍历已加载的 ``children``（懒加载的目录天然不在里面），**不读盘、
+        不重载、不展开**——自动刷新拿它判断「这一行现在在不在树上」。与
+        ``reload_path`` 的区别是找不到时不回落到全树 ``reload()``：那条兜底
+        会把整棵已展开子树重读一遍并把滚动位置拽回光标行，自动刷新不能走它。
+
+        路径先用纯字符串比较（``_loaded_nodes``，无系统调用）；落空时再按
+        ``resolve()`` 比一次，兜住「根路径与子路径写法不同」（软链 / macOS
+        ``/var`` → ``/private/var``）——``reload_path`` 依赖的老行为不变。
+        """
+        node = self._loaded_nodes().get(relative)
+        if node is not None:
+            return node
         target = (
             (self._root_path / relative).resolve()
             if relative
@@ -143,15 +177,11 @@ class FileTree(DirectoryTree):
             if data is not None:
                 try:
                     if Path(data.path).resolve() == target:
-                        self.reload_node(node)
-                        self._rel_cache.clear()
-                        return True
+                        return node
                 except (OSError, RuntimeError):
                     pass  # 路径已消失 / 符号链接环：继续找别的节点
             stack.extend(node.children)
-        self.reload()
-        self._rel_cache.clear()
-        return False
+        return None
 
     # ---------- git 状态配色（v0.10） ----------
 
@@ -167,6 +197,135 @@ class FileTree(DirectoryTree):
         self._status_map = dict(status)
         self._dir_status = self._derive_dir_status(self._status_map)
         self._invalidate_labels()
+
+    # ---------- 外部改动（v0.53：树跟着磁盘走） ----------
+
+    def sync_status(self, status: dict[str, str]) -> bool:
+        """把一次 git 状态快照同步到树上：先配色，再按需重扫目录。
+
+        返回状态表是否变化——没变化就什么也不做（防闪烁，也防每 3 s 白扫盘）。
+
+        **为什么不能只配色**：``set_status_map`` 只能给**已存在的行**换颜色。
+        外部新建的文件没有行、外部删掉的文件留着死行，两者都要动结构，而
+        「动结构」是这里唯一昂贵、也唯一会打扰用户的操作，所以规则收得很窄：
+        只有**行与磁盘不一致**的路径才重扫最近的已加载祖先目录，见
+        ``_refresh_structure``。
+
+        ``status`` 只含**当前**快照：被删/被移走的路径要从**上一份**表里找，
+        所以比较的是 ``previous | current`` 两个键集合，而不是只看当前这份。
+        """
+        if status == self._status_map:
+            return False
+        previous = self._status_map
+        self.set_status_map(status)
+        self._refresh_structure(previous, status, self._loaded_nodes())
+        return True
+
+    def _refresh_structure(
+        self,
+        previous: dict[str, str],
+        current: dict[str, str],
+        loaded: dict[str, "TreeNode"],
+    ) -> None:
+        """按「行集合变了」重扫最近的已加载祖先目录（最多 ``MAX_EXTERNAL_DIRS`` 个）。
+
+        每个候选路径只问一件事：**行和磁盘是不是一致**。
+
+        - 行在、盘上也在（只是状态码变了）→ 跳过，配色已由 ``set_status_map`` 完成；
+        - 行不在、盘上也不在 → 跳过；
+        - 其余（新文件 / 真删掉）→ 找到最近的已加载祖先目录重扫。
+
+        ``loaded`` 是**一次遍历**建好的 ``{相对路径: 节点}`` 索引（``_loaded_nodes``）：
+        一次 ``git checkout`` 可能带来几百个候选路径，每个都去走一遍树会让事件循环
+        卡住（实测 200 个路径 × 333 个可见节点的旧写法是 2.2 s）。
+
+        选中的目录再按自身状态分流：已展开 → ``reload_node``；**已加载但收起**
+        → 只置 ``DirEntry.loaded = False``，等用户下次展开时由基类重读
+        （``_add_to_load_queue`` 只看这个字段）。**不能**直接 ``reload_node``：
+        8.2.8 的 ``_reload`` 对目标节点无条件 ``expand()``，会把用户收好的目录
+        弹开——自动刷新不该有这种副作用。
+        """
+        targets: dict[str, "TreeNode"] = {}
+        for relative in set(previous) | set(current):
+            node = loaded.get(relative)
+            exists = self._path_exists(relative)
+            # 只有「行与磁盘不一致」才动结构：都在 → 配色就够；都不在 → 没得动。
+            if (node is not None) == exists:
+                continue
+            key, directory = self._nearest_loaded_dir(relative, loaded)
+            if directory is None:
+                continue  # 祖先都没加载 → 用户展开时自然会读盘，别在这里兜底
+            targets[key] = directory
+
+        # 祖先已选中的子目录不必再扫：reload_node 会把展开的子树一起重读。
+        ordered = sorted(targets.items(), key=lambda item: item[0].count("/"))
+        reload_list: list[tuple[str, "TreeNode"]] = []
+        for key, node in ordered:
+            if any(
+                key == parent or key.startswith(parent + "/")
+                for parent, _ in reload_list
+            ):
+                continue
+            reload_list.append((key, node))
+            if len(reload_list) >= MAX_EXTERNAL_DIRS:
+                break  # 安全阀：rm -rf 一棵大树时不让一轮刷新无限扩散
+
+        for _key, node in reload_list:
+            if node.is_expanded:
+                self.reload_node(node)
+            elif node.data is not None:
+                node.data.loaded = False  # 收起：标脏，展开时再读
+        if reload_list:
+            self._rel_cache.clear()
+
+    def _loaded_nodes(self) -> dict[str, "TreeNode"]:
+        """已加载节点 → ``{相对路径: 节点}``（根是 ``""``），一次遍历建好。
+
+        路径用 ``Path.relative_to`` 纯字符串比较，**不做 ``resolve()``**：树里的
+        子路径本来就由根路径拼出来（同上/同前缀），而 ``resolve()`` 是每个节点一次
+        系统调用——几百个候选路径的场景下这是唯一的性能瓶颈（见 ``_refresh_structure``）。
+        """
+        out: dict[str, "TreeNode"] = {}
+        stack = [self.root]
+        while stack:
+            node = stack.pop()
+            data = node.data
+            if data is not None:
+                relative: str | None
+                try:
+                    relative = str(Path(data.path).relative_to(self._root_path))
+                except (ValueError, OSError):
+                    relative = None  # 根路径换了写法（软链 / 竞态）：跳过这一项
+                if relative == ".":
+                    relative = ""
+                if relative is not None:
+                    out[relative] = node
+            stack.extend(node.children)
+        return out
+
+    def _path_exists(self, relative: str) -> bool:
+        """相对路径在磁盘上是否还在（权限 / 符号链接环一律按「不在」处理）。"""
+        try:
+            return (self._root_path / relative).exists()
+        except OSError:
+            return False
+
+    def _nearest_loaded_dir(
+        self, relative: str, loaded: dict[str, "TreeNode"]
+    ) -> tuple[str, "TreeNode | None"]:
+        """从 ``relative`` 的父目录往上，找最近的**已加载**目录节点。
+
+        返回 ``(相对路径, 节点)``；根节点恒在内存里，所以只要 ``loaded`` 里有根，
+        最后一定收敛到根。``(…, None)`` 只可能发生在根也没匹配上（路径写法变了）。
+        """
+        parent = relative.rpartition("/")[0]
+        while True:
+            node = loaded.get(parent)
+            if node is not None:
+                return parent, node
+            if not parent:
+                return "", None
+            parent = parent.rpartition("/")[0]
 
     @staticmethod
     def _derive_dir_status(status: dict[str, str]) -> dict[str, str]:

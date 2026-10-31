@@ -13,7 +13,9 @@
   宽度未知时用兜底预算 ``FALLBACK_CONTENT_CELLS``
   （= 侧栏最小宽 20 − padding 2）。
 - 刷新：分支 1s 一轮、**per-file 状态 3s 一轮**，都走 worker（git 是阻塞调用，
-  放事件循环里每秒卡一次，P3 R3）。
+  放事件循环里每秒卡一次，P3 R3）。v0.53 起 per-file 这份状态表还驱动**文件树
+  跟随外部改动**（新建 / 删除的行会落进树里，配色以外的事见
+  ``FileTree.sync_status``）。
 - **v0.11.3**：标题行 + 历史面板包进 ``#git-area`` 容器——聚焦 Git 面板时
   底色**只染下半区**（含标题行），与文件树各染各的半区（CSS 无法跨兄弟
   节点染色，需共同容器做 ``:focus-within`` 锚点；容器不改变布局）。
@@ -160,6 +162,10 @@ class Sidebar(Vertical):
 
         侧栏折叠时跳过（没人看得到颜色），省一次 git 调用；树的引用在
         ``await`` **之后**再取——避免首刷时控件尚未挂载。
+
+        v0.53 起这份状态表不只用来上色：``sync_status`` 会顺带把**外部新建 /
+        删除**的文件落到树上（App 之外发生的改动本来没有任何触发源）。
+        规则收得很窄，见 ``FileTree.sync_status`` 的 docstring。
         """
         if not self.display:
             return
@@ -167,7 +173,7 @@ class Sidebar(Vertical):
         tree = self._tree()
         if tree is None or status != "ok":
             return
-        tree.set_status_map(files)
+        tree.sync_status(files)
 
     def refresh_file_status(self) -> None:
         """立即起一轮 per-file 状态刷新（异步；侧栏展开回来时调用）。"""
@@ -180,4 +186,4 @@ class Sidebar(Vertical):
             return
         status, files = git_file_status(self.root)
         if status == "ok":
-            tree.set_status_map(files)
+            tree.sync_status(files)
