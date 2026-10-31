@@ -409,3 +409,39 @@ def test_sync_status_root_level_new_file(tmp_path):
             assert "top.txt" in _tree_lines(tree)
 
     asyncio.run(scenario())
+
+
+def test_sync_status_works_behind_a_symlinked_root(tmp_path):
+    """根路径与子项写法不同（软链根 / macOS ``/var``）时，删除也必须生效。
+
+    ``DirectoryTree._load_directory`` 会把子项 **resolve** 之后建节点，而根节点
+    保留调用方给的写法；索引若按文件系统路径建，整棵子树都对不上——表现是外部
+    新建的文件能出现（新行走的是「找不到祖先」以外的分支），但外部删除的文件
+    永远刷不掉。2026-10-31 实测复现，这里锁死。
+    """
+    real = tmp_path / "real"
+    real.mkdir()
+    (real / "a.txt").write_text("a\n")
+    (real / "b.txt").write_text("b\n")
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    app = TerminalApp(_FakeBackend([_pane()]), str(link))
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.6)
+            tree = app.query_one(FileTree)
+            _forbid_full_reload(tree)
+            assert {"a.txt", "b.txt"} <= set(tree._loaded_nodes())
+
+            tree.sync_status({"a.txt": "A", "b.txt": "A"})
+            await pilot.pause(0.3)
+            (real / "a.txt").unlink()
+            (real / "b.txt").unlink()
+            tree.sync_status({})
+            await pilot.pause(0.8)
+
+            assert "a.txt" not in _tree_lines(tree)
+            assert "b.txt" not in _tree_lines(tree)
+
+    asyncio.run(scenario())

@@ -140,31 +140,12 @@ class FileTree(DirectoryTree):
         ``reload_node`` 只会把它刷成空子节点（不抛错）；“删除”语义由 App
         层的 ``is_dir()`` 检查刷新父目录承接。只有节点真的不在树里（未加载 /
         竞态）才走全树 ``reload()`` 兜底并返回 ``False``。
+
+        **路径按 ``resolve()`` 比**：这是用户点「刷新此目录」的入口，必须认
+        「根路径与子路径写法不同」的情形（软链根，或 macOS 上 ``_load_directory``
+        会把子项 resolve 成 ``/private/var/…``）。内部的高频刷新不走这里，
+        见 ``find_loaded``。
         """
-        node = self.find_loaded(relative)
-        if node is None:
-            self.reload()
-            self._rel_cache.clear()
-            return False
-        self.reload_node(node)
-        self._rel_cache.clear()
-        return True
-
-    def find_loaded(self, relative: str) -> "TreeNode | None":
-        """静默查找**已在内存树里**的节点；找不到返回 ``None``。
-
-        只遍历已加载的 ``children``（懒加载的目录天然不在里面），**不读盘、
-        不重载、不展开**——自动刷新拿它判断「这一行现在在不在树上」。与
-        ``reload_path`` 的区别是找不到时不回落到全树 ``reload()``：那条兜底
-        会把整棵已展开子树重读一遍并把滚动位置拽回光标行，自动刷新不能走它。
-
-        路径先用纯字符串比较（``_loaded_nodes``，无系统调用）；落空时再按
-        ``resolve()`` 比一次，兜住「根路径与子路径写法不同」（软链 / macOS
-        ``/var`` → ``/private/var``）——``reload_path`` 依赖的老行为不变。
-        """
-        node = self._loaded_nodes().get(relative)
-        if node is not None:
-            return node
         target = (
             (self._root_path / relative).resolve()
             if relative
@@ -177,11 +158,26 @@ class FileTree(DirectoryTree):
             if data is not None:
                 try:
                     if Path(data.path).resolve() == target:
-                        return node
+                        self.reload_node(node)
+                        self._rel_cache.clear()
+                        return True
                 except (OSError, RuntimeError):
                     pass  # 路径已消失 / 符号链接环：继续找别的节点
             stack.extend(node.children)
-        return None
+        self.reload()
+        self._rel_cache.clear()
+        return False
+
+    def find_loaded(self, relative: str) -> "TreeNode | None":
+        """静默查找**已在内存树里**的节点；找不到返回 ``None``。
+
+        只认已加载的 ``children``（懒加载的目录天然不在里面），**不读盘、
+        不重载、不展开**——自动刷新拿它判断「这一行现在在不在树上」。与
+        ``reload_path`` 的区别有两点：找不到时不回落到全树 ``reload()``
+        （那条兜底会把整棵已展开子树重读一遍，还把滚动位置拽回光标行）；
+        键是**结构路径**而不是文件系统路径，见 ``_loaded_nodes``。
+        """
+        return self._loaded_nodes().get(relative)
 
     # ---------- git 状态配色（v0.10） ----------
 
@@ -281,26 +277,29 @@ class FileTree(DirectoryTree):
     def _loaded_nodes(self) -> dict[str, "TreeNode"]:
         """已加载节点 → ``{相对路径: 节点}``（根是 ``""``），一次遍历建好。
 
-        路径用 ``Path.relative_to`` 纯字符串比较，**不做 ``resolve()``**：树里的
-        子路径本来就由根路径拼出来（同上/同前缀），而 ``resolve()`` 是每个节点一次
-        系统调用——几百个候选路径的场景下这是唯一的性能瓶颈（见 ``_refresh_structure``）。
+        **键是结构路径，不是文件系统路径**：从根往下按「父目录相对路径 + 子项
+        ``name``」拼，完全不做 ``resolve()``。两个理由：
+
+        1. 快——``resolve()`` 是每节点一次系统调用，几百个候选路径的场景下
+           这就是唯一的瓶颈（见 ``_refresh_structure``）；
+        2. 对——``DirectoryTree._load_directory`` 会把子项 **resolve** 之后再
+           建节点（macOS 上 ``/var/…`` → ``/private/var/…``），而根节点保留
+           调用方给的写法。按文件系统路径比会**整个子树对不上**：表现是外部
+           新建文件能出现、外部删除的文件永远刷不掉（2026-10-31 实测，根路径
+           带软链或落在 ``/var`` 时必现）。
         """
         out: dict[str, "TreeNode"] = {}
-        stack = [self.root]
+        stack: list[tuple["TreeNode", str]] = [(self.root, "")]
         while stack:
-            node = stack.pop()
-            data = node.data
-            if data is not None:
-                relative: str | None
-                try:
-                    relative = str(Path(data.path).relative_to(self._root_path))
-                except (ValueError, OSError):
-                    relative = None  # 根路径换了写法（软链 / 竞态）：跳过这一项
-                if relative == ".":
-                    relative = ""
-                if relative is not None:
-                    out[relative] = node
-            stack.extend(node.children)
+            node, relative = stack.pop()
+            out[relative] = node
+            for child in node.children:
+                name = (
+                    child.data.path.name
+                    if child.data is not None
+                    else str(child.label.plain)
+                )
+                stack.append((child, f"{relative}/{name}" if relative else name))
         return out
 
     def _path_exists(self, relative: str) -> bool:
