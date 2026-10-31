@@ -17,7 +17,7 @@ MESSAGES: dict[str, str] = {
     "help.detach": "detach (front end exits, shells keep running)",
     "help.kill": "kill the session (asks first)",
     "help.new_pane": "new pane",
-    "help.close_pane": "close current pane",
+    "help.close_pane": "close current pane (asks when busy)",
     "help.focus_pane": "focus pane",
     "help.respawn": "respawn an exited pane",
     "help.sidebar_toggle": "collapse / expand sidebar",
@@ -228,6 +228,12 @@ MESSAGES: dict[str, str] = {
     "app.kill_confirm": "Kill the tmux server? Every shell will end.",
     "app.kill_confirm_yes": "Kill",
     "app.kill_confirm_no": "Cancel",
+    # v0.5.4：关 pane 前先问（有程序在前台时）。与 kill 那三句刻意分开：那边是
+    # 「退出 shell 再试」的拒绝口径（app.pane_running），这里是「仍在跑，关吗」。
+    "app.close_confirm_busy": "Close pane? {command} is still running here.",
+    "app.close_confirm_busy_unknown": "Close pane? A program is still running here.",
+    "app.close_confirm_yes": "Close",
+    "app.close_confirm_no": "Cancel",
     # 顶栏按钮：0.5.1 之前是硬编码英文，理由是「中文更宽」——实测相反
     # （" Detach " 8 cell vs " 分离 " 6 cell），见 tests/test_i18n.py 的 80 列用例。
     "topbar.detach": "Detach",

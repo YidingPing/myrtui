@@ -146,7 +146,7 @@ myrtui stop [目标]   # 结束实例：请前端干净退场后 kill tmux 会�
 | `Ctrl-a k` | kill tmux server（带确认），全部 shell 结束 |
 | `Ctrl-a t` | 新建 pane（自动进入下一布局档，最多 4 个） |
 | `Ctrl-a 1..4` | 切换焦点 pane（越界静默忽略） |
-| `Ctrl-a w` | 关闭当前 pane（只剩 1 个时 no-op） |
+| `Ctrl-a w` | 关闭当前 pane（有程序在跑时先确认；只剩 1 个时 no-op） |
 | `Ctrl-a r` | 重开已退出的 pane（焦点 pane 已死则优先它，否则最近死亡的） |
 | `Ctrl-a b` | 折叠 / 展开侧栏（折叠后 pane 变宽，tmux 尺寸同步联动） |
 | `Ctrl-a s` | 焦点移入侧栏（文件树）——键盘用户进入侧栏的入口 |

@@ -99,7 +99,7 @@ myrtui stop [target]   # ask the front end to leave, then kill the session
 | `Ctrl-a k` | kill the tmux server (asks first); all shells end |
 | `Ctrl-a t` | open a pane (advances to the next layout, max 4) |
 | `Ctrl-a 1..4` | focus pane N (out-of-range is ignored) |
-| `Ctrl-a w` | close the focused pane (no-op when only one is left) |
+| `Ctrl-a w` | close the focused pane; asks first when a program is running (no-op when only one is left) |
 | `Ctrl-a r` | re-open a dead pane (focused pane first, else most recent death) |
 | `Ctrl-a b` | collapse / expand the sidebar (panes grow, tmux resizes with it) |
 | `Ctrl-a s` | focus the file tree |

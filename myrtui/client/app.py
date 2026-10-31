@@ -380,39 +380,48 @@ class MainScreen(Screen, inherit_bindings=False):
         return super().get_selected_text()
 
 
-class KillConfirm(ModalScreen[bool]):
-    """Ctrl-a k 的确认提示。
+class ConfirmDialog(ModalScreen[bool]):
+    """破坏性动作的确认框（v0.5.4 起 `KillConfirm` 与「关闭忙 pane」共用）。
 
-    安全默认（P0 验收报告 §2）：默认焦点在 Cancel 而非 Kill，且 Esc/n 可取消——
-    否则键盘用户最自然的 Esc 无效、而 Enter 会直接杀掉全部 shell。
+    安全默认（P0 验收报告 §2）：默认焦点在 Cancel 而非确认按钮，且 Esc / n 可取消、
+    `y` 一键确认——否则键盘用户最自然的 Esc 无效、而 Enter 会直接执行破坏性动作。
+
+    文案由调用方传入（kill-server 与 close-pane 各一套），类本身不认识任何词表键。
+    CSS 写在 `ConfirmDialog` 上：Textual 的类型选择器匹配**全部基类名**
+    （`DOMNode._css_types` 取自 `_css_bases`），所以子类实例照样命中。
     """
 
     # 必须写在 class body：Textual 在 __init_subclass__ 阶段收集 BINDINGS，
-    # 事后赋值 KillConfirm.BINDINGS = [...] 不生效。
+    # 事后赋值 ConfirmDialog.BINDINGS = [...] 不生效。
     BINDINGS = [
         Binding("escape", "dismiss(False)", "Cancel", show=False),
         Binding("n", "dismiss(False)", "Cancel", show=False),
+        # v0.5.4：以前确认只能 Tab/Enter 或鼠标。Enter 落在 Cancel 上（安全默认），
+        # 于是「安全」和「一键」只能二选一；`y` 把两边都给了。
+        Binding("y", "dismiss(True)", "Confirm", show=False),
     ]
 
     CSS = """
-    KillConfirm { align: center middle; }
-    KillConfirm > Vertical {
+    ConfirmDialog { align: center middle; }
+    ConfirmDialog > Vertical {
         width: auto; height: auto;
         padding: 1 2; border: heavy $accent; background: $panel;
     }
-    KillConfirm Horizontal { height: 3; }
+    ConfirmDialog Horizontal { height: 3; }
     """
 
-    def __init__(self, message: str, **kwargs):
+    def __init__(self, message: str, yes_label: str, no_label: str, **kwargs):
         super().__init__(**kwargs)
         self._message = message
+        self._yes_label = yes_label
+        self._no_label = no_label
 
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Label(self._message)
             with Horizontal():
-                yield Button(t("app.kill_confirm_yes"), id="yes", variant="error")
-                yield Button(t("app.kill_confirm_no"), id="no", variant="primary")
+                yield Button(self._yes_label, id="yes", variant="error")
+                yield Button(self._no_label, id="no", variant="primary")
 
     def on_mount(self) -> None:
         # 默认焦点给 Cancel：Enter 落在破坏性按钮上是误触陷阱（P0 验收报告 §2）
@@ -420,6 +429,22 @@ class KillConfirm(ModalScreen[bool]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id == "yes")
+
+
+class KillConfirm(ConfirmDialog):
+    """``Ctrl-a k`` 的文案封装（行为全在 ``ConfirmDialog``）。
+
+    类名被 ``tests/test_p0.py`` / ``test_v15.py`` / ``test_i18n.py`` 直接引用，
+    v0.5.4 泛化时刻意**没有**改名——那三处断的是行为，不是类名语义。
+    """
+
+    def __init__(self, message: str, **kwargs):
+        super().__init__(
+            message,
+            t("app.kill_confirm_yes"),
+            t("app.kill_confirm_no"),
+            **kwargs,
+        )
 
 
 class TerminalApp(App, inherit_bindings=False):
@@ -2562,11 +2587,47 @@ class TerminalApp(App, inherit_bindings=False):
         # B1 §3.2-7：tmux 动作 + list-panes 在线程段，拓扑/焦点在循环段
         self._submit_job(fetch, apply=apply, label=t("app.job.new_window"))
 
+    def _close_busy_reason(self, pane_id: str) -> str | None:
+        """pane 里是否有程序在前台（关掉会丢东西）；返回可展示的命令名。
+
+        三种返回值，形状不对称但每个都有含义：
+
+        - ``None`` —— 空闲（停在 shell 提示符，或 pane 已 dead 没东西可丢）→ 直接关；
+        - ``""`` —— **忙但不知道在跑什么**（poll 缓存还是空的）→ 弹「不知道是谁」的框；
+        - 非空字符串 —— 忙，且知道命令名（``vim`` / ``sleep`` / …）→ 框里带上它。
+
+        「命令为空按忙处理」是刻意的：pane 刚建好的第一个 tick 之前
+        ``pane_current_command`` 还没进缓存，把它当空闲 = 在最危险的一瞬间
+        （刚启动的编译、刚 ``ssh`` 进去）静默强杀。宁可多问一次。
+
+        读的都是每 tick 的 poll 缓存（``_commands`` / ``_alt_screens`` / ``_dead``），
+        **不需要任何 tmux 调用**，UI 线程仍是 O(1)，且与「打开到当前 pane」的占用
+        口径一致（``_pane_problem``）。区别只在文案：那里是「退出再试」，
+        这里是「仍在运行，确定关闭吗」。
+        """
+        if self._dead.get(pane_id):
+            return None  # 已退出：没有可丢的东西，一键关
+        command = self._commands.get(pane_id)
+        # 白名单只认 basename（tmux 偶尔给完整路径），展示也用 basename——
+        # 确认框一行放不下 `/opt/homebrew/bin/…`，用户认的也是最后那一段。
+        base = _os.path.basename(command) if command else ""
+        if self._alt_screens.get(pane_id):
+            return base  # 全屏程序：命令名常常就是它；拿不到也照样问
+        if not base:
+            return ""
+        if base.lstrip("-").lower() in self._shell_names:
+            return None
+        return base
+
     def action_close_pane(self) -> None:
         """Ctrl-a w：关闭当前 pane（kill-window）。
 
         最后一个 pane 关闭会让 kill-window 连带杀掉整个 session → 禁止，no-op
         （设计拍板；结束会话走 Ctrl-a k 的确认路径）。
+
+        v0.5.4：pane 里有程序在前台时先确认——``kill-window`` 的信号打给整个
+        前台进程组，vim 未保存的缓冲区 / 跑了一半的 build / 等输入的 ``ssh``
+        会无声消失，而破坏面更大的 ``Ctrl-a k`` 反而一直有确认框。
         """
         if len(self._pane_ids) <= 1:
             return
@@ -2574,6 +2635,43 @@ class TerminalApp(App, inherit_bindings=False):
         window_id = self._window_ids.get(pid)
         if window_id is None:
             return
+        busy = self._close_busy_reason(pid)
+        if busy is None:
+            self._close_pane_now(window_id)
+            return
+        message = (
+            t("app.close_confirm_busy", command=busy)
+            if busy
+            else t("app.close_confirm_busy_unknown")
+        )
+
+        def confirmed(ok: bool | None) -> None:
+            if not ok:
+                return
+            # 模态框期间 poll 仍在跑（确认框不是 MainScreen，拓扑照常更新）：
+            # pane 可能已经消失、或已被 join 到别的 window。按**捕获的 pid** 重查，
+            # 不读 _active_index——槽位在模态期间可能被 clamp 过。
+            if pid not in self._pane_ids:
+                return
+            now = self._window_ids.get(pid)
+            if now is None:
+                return
+            self._close_pane_now(now)
+
+        self.push_screen(
+            ConfirmDialog(
+                message,
+                t("app.close_confirm_yes"),
+                t("app.close_confirm_no"),
+            ),
+            confirmed,
+        )
+
+    def _close_pane_now(self, window_id: str) -> None:
+        """提交 kill-window + 拓扑同步：直关与确认后走**同一段代码**。
+
+        拆出来是为了两条路径不会漂移（例如某天只在其中一条里补 ``_burst()``）。
+        """
 
         def fetch():
             self.backend.kill_window(window_id)  # check=False：失败不抛（旧语义）

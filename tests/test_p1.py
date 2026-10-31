@@ -19,9 +19,10 @@ from textual.widgets import Label
 from myrtui import cli
 from myrtui.gitstat import GitInfo, git_status, parse_git_status
 from myrtui.tmux_backend import TmuxBackend
-from myrtui.client.app import MAX_PANES, TerminalApp
+from myrtui.client.app import ConfirmDialog, MAX_PANES, TerminalApp
 from myrtui.client.pane_widget import PaneWidget
 from myrtui.client.topbar import BRAND_TEXT, TopBar, TopBarButton, PaneTab
+from myrtui.i18n import t
 
 
 # ---------- git 状态解析（§5，纯函数） ----------
@@ -554,6 +555,193 @@ def test_app_close_pane_and_last_is_noop(backend, app_root):
             assert len(app._pane_ids) == 1, "最后一个 pane 禁止关闭"
             assert backend.has_session(), "最后一个 pane 的 Ctrl-a w 必须 no-op"
     asyncio.run(scenario())
+
+
+# ---------- v0.5.4：关 pane 前先问（#close-pane-busy-confirm） ----------
+
+
+async def _wait_until(pilot, predicate, timeout: float = 6.0, step: float = 0.05):
+    """轮询到条件成立（Textual 时序不确定，见 tests/README.md）。"""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        await pilot.pause(step)
+    return predicate()
+
+
+def _pane_count(app) -> int:
+    return len(app._pane_ids)
+
+
+async def _wait_shell_ready(app, pilot, pane_id: str) -> bool:
+    """等 poll 缓存把该 pane 认成 shell。
+
+    **必须等**：新 pane 的头几个 tick 里 ``_commands`` 还是空的，而 v0.5.4 把
+    「空」判成「忙」（宁可多问一次）。不等就按 ``Ctrl-a w`` 会真弹框——
+    这个假红会诱导后来的人把「空」改回「空闲」，正好踩进设计里禁止的那个坑。
+    """
+    return await _wait_until(pilot, lambda: app._commands.get(pane_id) in app._shell_names)
+
+
+async def _wait_dialog(app, pilot, present: bool = True) -> bool:
+    return await _wait_until(
+        pilot, lambda: isinstance(app.screen, ConfirmDialog) is present
+    )
+
+
+async def _two_panes(app, pilot) -> str:
+    """建第二个 pane 并返回它的 pane_id（等 shell 就绪）。"""
+    assert await _wait_until(pilot, lambda: _pane_count(app) == 1)
+    await pilot.press("ctrl+a")
+    await pilot.press("t")
+    assert await _wait_until(pilot, lambda: _pane_count(app) == 2)
+    pid = app._pane_ids[app._active_index]
+    assert await _wait_shell_ready(app, pilot, pid), "新 pane 的 shell 未就绪"
+    return pid
+
+
+def test_close_pane_asks_when_busy(backend, app_root):
+    """pane 里有程序在前台 → Ctrl-a w 先确认；Esc / y 各走一路。"""
+
+    async def scenario():
+        app = _make_app(backend, app_root)
+        async with app.run_test(size=(100, 30)) as pilot:
+            pid = await _two_panes(app, pilot)
+            backend.send_text(pid, "sleep 60")
+            backend.send_keys(pid, "Enter")
+            assert await _wait_until(pilot, lambda: app._commands.get(pid) == "sleep")
+
+            await pilot.press("ctrl+a"); await pilot.press("w")
+            assert await _wait_dialog(app, pilot), "忙 pane 应先弹确认框"
+            assert app.screen._message == t("app.close_confirm_busy", command="sleep")
+            assert app.screen.focused.id == "no", "默认焦点应为 Cancel"
+            assert _pane_count(app) == 2, "确认前不得真的关"
+
+            # Esc 取消：pane 数不变、会话仍在
+            await pilot.press("escape")
+            assert await _wait_dialog(app, pilot, present=False)
+            assert _pane_count(app) == 2
+            assert backend.has_session()
+
+            # 再按一次，y 一键确认 → 真的关掉
+            await pilot.press("ctrl+a"); await pilot.press("w")
+            assert await _wait_dialog(app, pilot)
+            await pilot.press("y")
+            assert await _wait_until(pilot, lambda: _pane_count(app) == 1)
+            assert backend.has_session(), "关闭一个 pane 不得杀 session"
+
+    asyncio.run(scenario())
+
+
+def test_close_pane_cancel_with_n_keeps_pane(backend, app_root):
+    """`n` 与 Esc 同义（与 KillConfirm 的安全默认一致）。"""
+
+    async def scenario():
+        app = _make_app(backend, app_root)
+        async with app.run_test(size=(100, 30)) as pilot:
+            pid = await _two_panes(app, pilot)
+            backend.send_text(pid, "sleep 60")
+            backend.send_keys(pid, "Enter")
+            assert await _wait_until(pilot, lambda: app._commands.get(pid) == "sleep")
+
+            await pilot.press("ctrl+a"); await pilot.press("w")
+            assert await _wait_dialog(app, pilot)
+            await pilot.press("n")
+            assert await _wait_dialog(app, pilot, present=False)
+            assert _pane_count(app) == 2
+
+    asyncio.run(scenario())
+
+
+def test_close_pane_idle_closes_immediately(backend, app_root):
+    """停在提示符的 pane 仍一键关：不引入「到处弹框」的退化。"""
+
+    async def scenario():
+        app = _make_app(backend, app_root)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await _two_panes(app, pilot)  # 内部已等 shell 就绪
+            await pilot.press("ctrl+a"); await pilot.press("w")
+            assert await _wait_until(pilot, lambda: _pane_count(app) == 1)
+            assert not isinstance(app.screen, ConfirmDialog), "空闲 pane 不应弹确认框"
+
+    asyncio.run(scenario())
+
+
+def test_close_pane_dead_closes_immediately(backend, app_root):
+    """已退出的 pane 没东西可丢 → 不弹框（判据里的 `pane_dead` 分支）。"""
+
+    async def scenario():
+        app = _make_app(backend, app_root)
+        async with app.run_test(size=(100, 30)) as pilot:
+            pid = await _two_panes(app, pilot)
+            backend.send_text(pid, "exit")
+            backend.send_keys(pid, "Enter")
+            assert await _wait_until(pilot, lambda: app._dead.get(pid) is True)
+
+            await pilot.press("ctrl+a"); await pilot.press("w")
+            assert await _wait_until(pilot, lambda: _pane_count(app) == 1)
+            assert not isinstance(app.screen, ConfirmDialog), "dead pane 不应弹确认框"
+
+    asyncio.run(scenario())
+
+
+def test_close_pane_confirmed_after_pane_vanished(backend, app_root):
+    """确认框开着时 pane 被外部杀掉 → 再按确认不得误关别的 pane。"""
+
+    async def scenario():
+        app = _make_app(backend, app_root)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await _two_panes(app, pilot)
+            await pilot.press("ctrl+a"); await pilot.press("t")
+            assert await _wait_until(pilot, lambda: _pane_count(app) == 3)
+            pid = app._pane_ids[app._active_index]
+            assert await _wait_shell_ready(app, pilot, pid)
+            backend.send_text(pid, "sleep 60")
+            backend.send_keys(pid, "Enter")
+            assert await _wait_until(pilot, lambda: app._commands.get(pid) == "sleep")
+
+            await pilot.press("ctrl+a"); await pilot.press("w")
+            assert await _wait_dialog(app, pilot)
+
+            # 模态期间 poll 仍在跑：从外部杀掉这个 window
+            backend.kill_window(app._window_ids[pid])
+            assert await _wait_until(pilot, lambda: pid not in app._pane_ids)
+            assert _pane_count(app) == 2
+
+            await pilot.press("y")
+            await pilot.pause(0.4)
+            assert _pane_count(app) == 2, "pid 已消失时确认不得再关一个"
+            assert backend.has_session()
+
+    asyncio.run(scenario())
+
+
+def test_close_busy_reason_three_shapes(backend, app_root):
+    """`_close_busy_reason` 的三种返回值（纯读缓存，不启 App）。
+
+    ``None`` = 空闲、``""`` = 忙但不知道在跑什么、非空 = 忙且知道命令名。
+    这个形状不对称，是最容易被后来者改错的一处，所以单独立一条。
+    """
+    app = _make_app(backend, app_root)
+    app._shell_names = {"zsh"}
+    app._commands = {"p1": "zsh"}
+    app._alt_screens = {}
+    app._dead = {}
+
+    assert app._close_busy_reason("p1") is None, "停在提示符 → 直接关"
+    app._commands["p1"] = ""
+    assert app._close_busy_reason("p1") == "", "缓存空 → 按忙处理（不知道在跑什么）"
+    app._commands["p1"] = "vim"
+    assert app._close_busy_reason("p1") == "vim"
+    app._commands["p1"] = "/usr/local/bin/vim"
+    assert app._close_busy_reason("p1") == "vim", "展示用 basename，框里放得下"
+    app._alt_screens["p1"] = True
+    assert app._close_busy_reason("p1") == "vim", "全屏程序也带着命令名"
+    app._commands["p1"] = ""
+    assert app._close_busy_reason("p1") == "", "全屏但拿不到命令名"
+    app._dead["p1"] = True
+    assert app._close_busy_reason("p1") is None, "dead pane 没有可丢的东西"
 
 
 def test_app_key_routes_to_active_pane(backend, app_root):
