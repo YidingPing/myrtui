@@ -134,7 +134,8 @@ the full cheat sheet. Full tables: [docs/USAGE.md](docs/USAGE.md#key-bindings).
   instance management, all environment variables). Also available in
   [Chinese](docs/USAGE.zh-CN.md).
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — module map and design decisions.
-- [CONTRIBUTING.md](CONTRIBUTING.md) — how to run tests, plus the language policy.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — how to run tests, the language policy,
+  and how the project is built.
 
 Code comments and docstrings are written in Chinese by project convention;
 user-facing text (this README, the UI, `docs/`) is available in English.

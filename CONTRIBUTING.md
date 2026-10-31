@@ -6,6 +6,12 @@ are what you need to run it, test it, and not fight its conventions.
 **If you are an AI agent, read [AGENTS.md](AGENTS.md) first** — it is the
 short form of everything below, plus the hard rules.
 
+## How this project is built
+
+Development uses an AI coding agent alongside the maintainer. **Every change is
+reviewed, tested and accepted by the maintainer**; a behaviour change without a
+regression test is not merged, whoever — or whatever — wrote it.
+
 ## Language policy
 
 - **Code comments and docstrings are in Chinese** by project convention. This

@@ -126,7 +126,7 @@ myrtui                 # 首次运行创建会话，之后都是 attach
   全部环境变量。
 - [docs/USAGE.md](docs/USAGE.md) —— 同一份手册的英文版。
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) —— 模块划分与设计取舍。
-- [CONTRIBUTING.md](CONTRIBUTING.md) —— 如何跑测试，以及注释语言政策。
+- [CONTRIBUTING.md](CONTRIBUTING.md) —— 如何跑测试、注释语言政策，以及本项目是如何开发的。
 
 按项目约定，**代码注释与 docstring 用中文**；面向用户的文本（README、界面、
 `docs/`）提供英文。Issue 与 PR 中英文都欢迎。
