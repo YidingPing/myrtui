@@ -181,6 +181,18 @@ Publishing) → GitHub Release. macOS is covered by the Gitea runners on every
 push; the GitHub macOS job is manual, so a queued hosted runner cannot block a
 release. Never re-upload an existing version.
 
+**There is no approval gate on PyPI** (since 2026-10-31 the `pypi` environment
+has no required reviewers): pushing the tag uploads immediately. **The tag is
+the gate.** Push it only after `docs-internal/docs/RELEASE.md` §3–§6 are green,
+and never re-upload an existing version. If an approval step is ever restored,
+document the hand-off in the same commit — an undocumented `Waiting for
+approval` state is how 0.5.4 lost six minutes to idle polling with nobody told
+to click.
+
+Watch a run with `docs-internal/scripts/watch_release.py` rather than an ad-hoc
+poll loop: its exit code is the conclusion (`0` green, `1` failed, `3` **a human
+is required — stop and hand over**, `4` timed out).
+
 ## Code style
 
 - Python ≥ 3.10, `from __future__ import annotations`, type hints on public
