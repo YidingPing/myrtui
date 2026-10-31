@@ -176,8 +176,10 @@ git push origin main
 git tag v<version> && git push origin v<version>
 ```
 
-The tag runs `release.yml`: macOS verification → build → PyPI (Trusted
-Publishing) → GitHub Release. Never re-upload an existing version.
+The tag runs `release.yml`: Linux verification → build → PyPI (Trusted
+Publishing) → GitHub Release. macOS is covered by the Gitea runners on every
+push; the GitHub macOS job is manual, so a queued hosted runner cannot block a
+release. Never re-upload an existing version.
 
 ## Code style
 

@@ -75,8 +75,10 @@ need that context, open an issue — do not add such files here.
    `myrtui/__init__.py`.
 2. Push `main`; CI must be green.
 3. `git tag v<version> && git push origin v<version>` — `release.yml` then runs
-   the macOS verification, builds wheel + sdist, publishes to PyPI via Trusted
-   Publishing, and creates the GitHub Release.
+   the Linux verification, builds wheel + sdist, publishes to PyPI via Trusted
+   Publishing, and creates the GitHub Release. macOS is covered by the Gitea
+   runners on every push; the GitHub macOS job is manual only, so a queued
+   hosted runner can no longer block a release.
 
 Publishing requires `pypi` as the Trusted Publisher environment in the repo
 settings; see the header of `.github/workflows/release.yml`.

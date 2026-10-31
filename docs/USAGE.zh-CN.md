@@ -584,8 +584,9 @@ python -m pytest -n 4     # 跑测试（后端测试使用隔离 tmux 实例，�
 发版：bump `pyproject.toml` 的 `version` 与 `myrtui/__init__.py` 的 `__version__`
 （`myrtui --version` 读的是 `importlib.metadata`，装出来的 wheel 才体现新版本）→
 推 main → 打 tag（`git tag v<版本> && git push origin v<版本>`）→
-`.github/workflows/release.yml` 自动跑 macOS 验证、构建 wheel + sdist、发布到
-PyPI 与 GitHub Releases。
+`.github/workflows/release.yml` 自动跑 Linux 验证、构建 wheel + sdist、发布到
+PyPI 与 GitHub Releases（macOS 面由 Gitea 自建 runner 每次推送覆盖，GitHub 上的
+macOS 任务改为手动触发，排队不再阻塞发布）。
 
 贡献方式、代码风格与**注释语言政策**见 [CONTRIBUTING.md](../CONTRIBUTING.md)；
 架构说明见 [ARCHITECTURE.md](ARCHITECTURE.md)；英文手册见 [USAGE.md](USAGE.md)；
