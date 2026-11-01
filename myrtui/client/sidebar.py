@@ -91,6 +91,19 @@ class Sidebar(Vertical):
 
     # ---------- 分支 / 标题 ----------
 
+    def _on_top_screen(self) -> bool:
+        """侧栏所属的屏幕是不是顶层（模态 / 预览盖住时不要落 DOM）。
+
+        背景屏的脏区会被 Textual 抄到顶层屏（``Screen._on_timer_update``），
+        顶层若是整屏 Sixel 页（``v``），配色 / 结构一改就要重发整张图 → 闪。
+        数据下一轮自然重算：分支 1 s、状态 3 s 各有一轮，回到主屏时 App 的
+        ``_catch_up_after_modal`` 也会立刻补一帧。
+        """
+        try:
+            return self.screen is self.app.screen
+        except Exception:  # noqa: BLE001 —— teardown 竞态
+            return False
+
     def refresh_branch(self) -> None:
         """同步刷新分支（未挂载也可调用——测试直接构造 Sidebar 时用）。"""
         status, info = git_status(self.root)
@@ -106,6 +119,8 @@ class Sidebar(Vertical):
     async def _refresh_branch_worker(self) -> None:
         """分支刷新（worker）：``git status`` 在线程里跑。"""
         status, info = await asyncio.to_thread(git_status, self.root)
+        if not self._on_top_screen():
+            return  # 模态盖住主屏：别把脏区抄到顶层整屏位图上
         self._git_status, self._git = status, info
         self._render_title()
 
@@ -173,8 +188,8 @@ class Sidebar(Vertical):
             return
         status, files = await asyncio.to_thread(git_file_status, self.root)
         tree = self._tree()  # 引用在第一个 await 之后取，避免首刷时控件未挂载
-        if tree is None:
-            return
+        if tree is None or not self._on_top_screen():
+            return  # 模态盖住主屏：配色 / 结构改动只会触发顶层整屏位图重发
         if status == "ok":
             tree.sync_status(files)  # 配色 + git 驱动的结构（不变）
         # 第二条信号（0.5.5）：忽略目录 / 嵌套仓 / 非仓库目录只靠扫盘才看得见。
@@ -183,7 +198,8 @@ class Sidebar(Vertical):
         targets = tree.scan_targets()
         if targets:
             scanned = await asyncio.to_thread(scan_dirs, targets)
-            if self._tree() is tree:  # 第二个 await 期间控件可能已卸载
+            # 第二个 await 期间控件可能已卸载，也可能被模态盖住
+            if self._tree() is tree and self._on_top_screen():
                 tree.sync_dirs(scanned)
 
     def refresh_file_status(self) -> None:

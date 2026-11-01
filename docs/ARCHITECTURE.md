@@ -109,6 +109,16 @@ empty disables).
 Previews are overlay screens, not panes — that is why they work while a pane is
 busy running `vim` or `ssh`.
 
+While an overlay is on top, the app **does not paint the main screen at all**
+(panes, tabs, top bar, sidebar, git log). Textual copies a background screen's
+dirty regions onto the top screen, so a single pane update would force the
+overlay to repaint the same rows — and if the overlay shows a full-screen Sixel
+page, that re-sends the whole bitmap (measured: 34 frames / 3.2 MB in 2 s, i.e.
+a visible flicker even while "idle"). Polling keeps running so topology, dead
+panes and mouse modes stay current; the diff caches are *not* advanced, so the
+first poll after closing the overlay repaints everything (`ScreenResume` also
+triggers that poll immediately).
+
 - **Markdown**: GFM via Textual's own Markdown widgets; inline/block math is
   rendered by the optional `termtex` binary and degrades to LaTeX source.
 - **LaTeX page view** (`v`): the document becomes a self-contained HTML page

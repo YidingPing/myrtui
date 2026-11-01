@@ -232,6 +232,12 @@ is not auto-refreshed — if it changes on disk while open, the footer says so a
 `r` reloads it. Files above 512 KiB are refused with a
 message; binary/missing/empty files show a readable reason.
 
+While a preview (Markdown, LaTeX page view, image) is open, the panes behind it
+are **not repainted**: a repaint of a hidden pane would be copied onto the
+overlay and re-send a full-screen bitmap, which is exactly what makes the
+LaTeX page flicker. Closing the preview repaints panes, tabs and the sidebar
+immediately; tmux itself never stops.
+
 **LaTeX page view** (`v`): the whole document becomes self-contained HTML with
 KaTeX, Chrome prints it to PDF at exactly the terminal viewport size, and
 `pdftocairo` rasterises each page 1:1. One page = one screen, and navigation is

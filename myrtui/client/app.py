@@ -385,6 +385,18 @@ class MainScreen(Screen, inherit_bindings=False):
             return got[0].rstrip("\n") or None
         return super().get_selected_text()
 
+    def _on_screen_resume(self, event) -> None:
+        """主屏回到顶层（预览 / 菜单 / 确认框关闭）→ 立刻补一帧。
+
+        模态期间 App 跳过了主屏的全部 DOM 写入（见 ``_panes_obscured``），
+        不补的话 pane 会停在打开预览前的那一刻，直到下一个 tick 才恢复。
+        """
+        super()._on_screen_resume(event)
+        try:
+            self.app._catch_up_after_modal()
+        except AttributeError:  # 非 TerminalApp（测试替身）时没有这个钩子
+            pass
+
 
 class ConfirmDialog(ModalScreen[bool]):
     """破坏性动作的确认框（v0.5.4 起 `KillConfirm` 与「关闭忙 pane」共用）。
@@ -582,6 +594,11 @@ class TerminalApp(App, inherit_bindings=False):
         self._commands: dict[str, str] = {}  # pane_current_command（v0.28 占用判定）
         self._alt_screens: dict[str, bool] = {}
         self._cache: dict[str, tuple] = {}  # 防闪烁 diff（N16）
+        # 0.6.1：模态（预览 / 菜单 / 确认框）盖住主屏期间，主屏一律不落 DOM。
+        # Textual 会把背景屏的脏区复制到顶层屏（`Screen._on_timer_update`），
+        # 顶层若是整屏 Sixel 页，每轮都会把那几十 KB 图像重发一遍 → 画面持续
+        # 闪。True = 有画面被冻结，回到主屏时要立刻补一帧。
+        self._paint_frozen = False
         # IME 锚点（v0.18）：per-pane **最后一次**内层光标坐标（tmux
         # ``cursor_x/y``，仅实时视图且 cursor_flag 有效时记录）——光标被程序
         # 隐藏/dead/翻 scrollback 时锚点回退用（「保持该 pane 上次光标」拍板）
@@ -1553,6 +1570,11 @@ class TerminalApp(App, inherit_bindings=False):
 
     def _refresh_git_log(self) -> None:
         """取数入口（3s 定时器 / 目标切换事件）→ 启动一次 worker。"""
+        if self._panes_obscured():
+            # 模态盖住主屏：重建历史列表只会把背景屏脏区搬到顶层的整屏位图上
+            # （见 _panes_obscured），回到主屏时 _catch_up_after_modal 补一次。
+            self._paint_frozen = True
+            return
         try:
             visible = self._git_log_visible()
         except NoMatches:
@@ -2011,6 +2033,34 @@ class TerminalApp(App, inherit_bindings=False):
             return
         topbar.set_status("")
 
+    def _panes_obscured(self) -> bool:
+        """主屏是否被模态盖住（Markdown / 图片预览、右键菜单、确认框）。
+
+        为什么要单独判定：Textual 8.2.8 ``Screen._on_timer_update`` 会把
+        **背景屏**的脏区抄到顶层屏（``app.screen.refresh(*dirty)``）。主屏每轮
+        poll 都在更新 pane / tab / 顶栏，抄过去就是让顶层屏重画同样的行；顶层
+        若是整屏 Sixel 页（``v``），那几行里带着几十 KB 图像数据 → 每轮重发、
+        终端重绘整张图 → 画面持续闪烁（0.6.1 真机：不翻页也闪）。被盖住时这些
+        写入全都没有意义，跳过即可，状态记账照旧。
+        """
+        try:
+            return not isinstance(self.screen, MainScreen)
+        except Exception:  # noqa: BLE001 —— teardown 竞态：按「被盖住」处理
+            return True
+
+    def _catch_up_after_modal(self) -> None:
+        """主屏回到顶层（模态关闭）：立刻补一帧 + 重拉 Git 历史。
+
+        预览期间主屏的 DOM 写入全部被跳过，``_cache`` / ``_tab_labels`` 也没有
+        推进——所以这一轮 poll 会发现全部 diff、把 pane / tab / 顶栏一次补画
+        完，而不是等下一个 tick，更不会把旧画面留在屏幕上。
+        """
+        if not self._paint_frozen:
+            return
+        self._paint_frozen = False
+        self._refresh_git_log()
+        self._burst()
+
     def _poll_render(self, outcome: _PollOutcome) -> None:
         """poll apply 段主体（旧 ``_poll`` 的后半段，逐行沿用 N16 防闪烁 diff）。"""
         panes = outcome.panes or []
@@ -2020,6 +2070,10 @@ class TerminalApp(App, inherit_bindings=False):
         labels: list[str] = []
         deads: list[bool] = []
         changed = False
+        # 模态盖住主屏时不画（状态记账照常）：见 _panes_obscured。
+        paint = not self._panes_obscured()
+        if not paint:
+            self._paint_frozen = True
         for i, pid in enumerate(self._pane_ids):
             widget = self.query_one(f"#pane-{i}", PaneWidget)
             info = info_by_id.get(pid)
@@ -2078,7 +2132,7 @@ class TerminalApp(App, inherit_bindings=False):
             diff_key = (cap.text, cursor, info.dead)
             # v0.35：拖拽中冻结 pane 的画面（不更新 _cache，解冻后靠 pop 强制
             # 重建）；元数据（鼠标级别 / offset / dead / 宽高等）照常更新
-            if pid != self._frozen_pane and self._cache.get(pid) != diff_key:
+            if paint and pid != self._frozen_pane and self._cache.get(pid) != diff_key:
                 self._cache[pid] = diff_key
                 changed = True
                 lines = [
@@ -2100,10 +2154,11 @@ class TerminalApp(App, inherit_bindings=False):
             # 内容在动 → 提频（0.6.0：tail -f / 图像动画跟读更顺）；静止后
             # STREAM_HOLD 到期自动回落 _idle_interval，静置成本不变
             self._stream_until = time.monotonic() + STREAM_HOLD
-        if labels != self._tab_labels or deads != self._tab_deads:
+        if paint and (labels != self._tab_labels or deads != self._tab_deads):
             self._tab_labels, self._tab_deads = labels, deads
             self._update_tabs()
-        self._refresh_status()
+        if paint:
+            self._refresh_status()
         # IME 锚点（v0.18）：每轮抓屏后对齐活动 pane 的光标（无 diff 时
         # 也是幂等 no-op，只发一次 CUP 或什么都不发）
         self._sync_ime_anchor()

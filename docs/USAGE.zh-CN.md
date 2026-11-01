@@ -307,6 +307,10 @@ capture 刷新漂移。
 预览**不占用 pane**，所以当前 pane 在跑 opencode / vim / ssh，或已经退出时，
 仍然可以看 Markdown。
 
+预览（Markdown / LaTeX 排版 / 图片）打开期间，**背后的 pane 不再重绘**：主屏的
+脏区会被 Textual 抄到顶层预览屏，重绘 pane 等于把整屏位图重发一遍——LaTeX 排版
+视图的闪烁正是这么来的。关闭预览会立刻重绘 pane、标签与侧栏；tmux 本身不受影响。
+
 #### LaTeX 排版视图（v0.37.2，`v`）
 
 按 `v`：整篇 md → 自包含 HTML（KaTeX `auto-render`）→ Chrome `--print-to-pdf`

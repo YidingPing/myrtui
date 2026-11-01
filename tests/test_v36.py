@@ -744,3 +744,114 @@ def test_sidebar_shortcut_text_is_synced():
     assert row.desc_key == "help.right_click"
     # conftest 把语言钉成 zh_CN，这里顺带锁住中文措辞没漂
     assert t(row.desc_key) == "打开 / 预览 / 复制路径"
+
+
+# ---------------------------------------------------------------------------
+# 0.6.1：模态盖住主屏时不重绘主屏（`v` 屏静止闪烁的回归）
+# ---------------------------------------------------------------------------
+
+
+def _preview_over_app(pilot, app, absolute):
+    app.push_screen(MarkdownPreviewScreen(absolute, relative="notes.md"))
+
+
+def test_modal_screen_freezes_pane_painting(tmp_path, monkeypatch):
+    """模态在上时 pane 控件一次都不许写。
+
+    背景屏的脏区会被 Textual 抄到顶层屏（`Screen._on_timer_update`）；顶层
+    若是整屏 Sixel 页，每轮 poll 都会把那几十 KB 图像重发一遍 → 不翻页也闪。
+    这里直接跑一轮 apply 段，断言「不画、也不推进 diff 缓存」——缓存推进了
+    的话，回到主屏那一轮会以为内容没变，把旧画面留在屏幕上。
+    """
+    from myrtui.client.app import MainScreen, _PollOutcome
+    from myrtui.client.pane_widget import PaneWidget
+
+    app = _app(tmp_path)
+    absolute = str((tmp_path / "notes.md").resolve())
+    painted: list[str] = []
+    real_set_content = PaneWidget.set_content
+
+    def spy(self, *args, **kwargs):
+        painted.append(self.id or "")
+        return real_set_content(self, *args, **kwargs)
+
+    monkeypatch.setattr(PaneWidget, "set_content", spy)
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.3)
+            _preview_over_app(pilot, app, absolute)
+            await pilot.pause(0.3)
+            assert not isinstance(app.screen, MainScreen)
+
+            painted.clear()
+            app._cache.clear()  # 假装每个 pane 的内容都变了
+            panes, captures = app.backend.poll({})
+            app._poll_render(
+                _PollOutcome(panes=panes, captures=captures, offsets={})
+            )
+            assert painted == [], "模态在上时不能写 pane 控件"
+            assert app._cache == {}, "diff 缓存不能推进，否则回主屏不会补画"
+            assert app._paint_frozen is True
+
+            app.pop_screen()
+            assert await _wait_until(pilot, lambda: bool(painted), timeout=3.0), (
+                "回到主屏要立刻补一帧"
+            )
+            assert app._paint_frozen is False
+
+    asyncio.run(scenario())
+
+
+def test_modal_screen_pauses_git_log_refresh(tmp_path, monkeypatch):
+    """3 s 的 git log 重建同样要停：它每轮都重填列表，等于每 3 s 闪一下。"""
+    from myrtui.client.app import MainScreen
+
+    app = _app(tmp_path)
+    absolute = str((tmp_path / "notes.md").resolve())
+    loads: list[int] = []
+    monkeypatch.setattr(app, "_load_git_log", lambda: loads.append(1))
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.3)
+            _preview_over_app(pilot, app, absolute)
+            await pilot.pause(0.3)
+            assert not isinstance(app.screen, MainScreen)
+
+            loads.clear()
+            app._refresh_git_log()
+            assert loads == [], "模态在上时不重建历史列表"
+
+            app.pop_screen()
+            assert await _wait_until(pilot, lambda: bool(loads), timeout=3.0), (
+                "回到主屏要补一次 git log"
+            )
+
+    asyncio.run(scenario())
+
+
+def test_sidebar_skips_painting_under_a_modal(tmp_path):
+    """侧栏 1 s / 3 s 两轮刷新也要认「自己是不是顶层」。"""
+    from myrtui.client.app import MainScreen
+    from myrtui.client.sidebar import Sidebar
+
+    app = _app(tmp_path)
+    absolute = str((tmp_path / "notes.md").resolve())
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.3)
+            sidebar = app.query_one("#sidebar", Sidebar)
+            assert sidebar._on_top_screen() is True
+
+            _preview_over_app(pilot, app, absolute)
+            await pilot.pause(0.3)
+            assert not isinstance(app.screen, MainScreen)
+            assert sidebar._on_top_screen() is False
+
+            app.pop_screen()
+            await pilot.pause(0.3)
+            assert sidebar._on_top_screen() is True
+
+    asyncio.run(scenario())
