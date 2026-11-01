@@ -40,7 +40,7 @@ Textual owns layout, focus, input routing and the preview layers.
 | `client/separators.py` | splitter hit areas (±1 cell), drag/double-click reset, ratio persistence |
 | `client/sidebar.py` / `file_tree.py` / `git_panel.py` | left column: tree with git colours + commit history with hover details |
 | `client/context_menu.py` | right-click / keyboard menu over the tree (open, preview, copy path) |
-| `client/docpage.py` / `pageview.py` | paged Markdown reader and the LaTeX page view (KaTeX → Chrome → PDF → PNG) |
+| `client/docpage.py` / `pageview.py` | paged Markdown reader and the LaTeX page view (KaTeX → Chrome → PDF → PNG, page-snapped scrolling) |
 | `client/mdpreview.py` / `mathtext.py` / `mathrender.py` / `mathimg.py` / `katex.py` | Markdown rendering, `$math$` handling, `termtex` bridge, KaTeX asset pipeline |
 | `client/imagepreview.py` / `imageprep.py` / `graphics.py` | image preview, decode/resize/compose in workers, Sixel / TGP detection |
 | `client/clipboard.py` | OSC 52 + platform clipboard commands, SSH detection, internal buffer fallback |
@@ -114,7 +114,11 @@ busy running `vim` or `ssh`.
 - **LaTeX page view** (`v`): the document becomes a self-contained HTML page
   (KaTeX auto-render), Chrome prints it to PDF at exactly the terminal viewport
   size, `pdftocairo` rasterises each page 1:1, and pages are shown as bitmaps.
-  A page = a screen; the price is no text selection in that view.
+  A page = a screen; navigation snaps to page boundaries because
+  `textual-image` keys its sixel cache on the visible crop — a partially visible
+  page is re-encoded in full on every scroll step (~380 ms for a 2520×1260
+  page), which is what makes free scrolling flicker and stall. The price is no
+  text selection in that view.
 - **Images**: decoded and resized in a worker, composited against the theme
   background (terminals do not do alpha), then drawn with Sixel or Kitty TGP
   when available; otherwise metadata plus a text placeholder.

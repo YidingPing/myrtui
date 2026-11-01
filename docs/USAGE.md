@@ -234,13 +234,22 @@ message; binary/missing/empty files show a readable reason.
 
 **LaTeX page view** (`v`): the whole document becomes self-contained HTML with
 KaTeX, Chrome prints it to PDF at exactly the terminal viewport size, and
-`pdftocairo` rasterises each page 1:1. One page = one screen, seamless
-scrolling. The default theme is sepia (`#E6DABE` page, `#3D3427` text, ~8.8:1);
+`pdftocairo` rasterises each page 1:1. One page = one screen, and navigation is
+**page by page** (one keypress or one wheel notch per screen). The default theme
+is sepia (`#E6DABE` page, `#3D3427` text, ~8.8:1);
 `MYRTUI_PAGE_THEME` switches between `sepia` / `paper` / `gray` / `white` /
 `dim` / `dark`. The trade-off: no text selection or search in this view, and
 resizing re-typesets (1–2 s). Requires Chrome/Chromium + `pdftocairo` and a
 Sixel/TGP terminal; missing pieces are reported instead of showing a blank page.
 Rendered pages are cached under `<cache>/myrtui/pages/<sha1>/p-001.png…`.
+
+> Why page snaps instead of free scrolling: a page is a full-screen bitmap, and
+> `textual-image` keys its sixel cache on the visible crop — scrolling one line
+> re-encodes both partially visible pages (measured ~380 ms each for a
+> 2520×1260 page, on the UI thread), and key scrolling used to animate (a dozen
+> such frames per press). That is what made this view flicker and feel sluggish.
+> Snapping to page boundaries keeps exactly one complete page on screen, so the
+> cache always hits; the cost is that there is no half-page transition.
 
 **Preview image** works for `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`,
 `.tif`, `.tiff`, `.ico`, `.avif`:

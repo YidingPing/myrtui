@@ -7,7 +7,7 @@
   ``render_pages``（fake Chrome + fake poppler：页数、尺寸归一、缓存命中、
   缺工具 / 失败 / 页数上限）；
 - ``pageview``：页图控件的 cell 尺寸、失败提示、``r`` 清缓存、页号、
-  预览层 ``v`` 的入口与降级；
+  整页吸附 / 关动画 / 滚轮冷却（0.6.1）、预览层 ``v`` 的入口与降级；
 - 真机冒烟（有 Chrome/Pillow 才跑）：两页 PDF 的像素尺寸必须等于页面尺寸。
 """
 from __future__ import annotations
@@ -581,6 +581,144 @@ def test_paged_screen_hides_scrollbar_to_keep_one_to_one(monkeypatch, tmp_path):
             container = app.screen.query_one("#paged-scroll")
             # 滚动条不占列 → 页面宽度 == 终端宽度（1:1，不重采样）
             assert container.size.width == 110
+
+    asyncio.run(scenario())
+
+
+# ---------------------------------------------------------------------------
+# pageview v0.6.1：整页吸附（闪 / 迟钝的回归）
+# ---------------------------------------------------------------------------
+
+
+def _three_pages(tmp_path):
+    spec = _spec(cols=110, rows=39)
+    pages = [_fake_png(tmp_path / f"p{index}.png", size=spec.size) for index in (1, 2, 3)]
+    return pages
+
+
+def test_paged_screen_moves_by_whole_pages_only(monkeypatch, tmp_path):
+    """``↑`` / ``↓`` 也必须是整页。
+
+    页面是整屏位图，``textual-image`` 的重编码缓存键含 ``crop``：停在半页
+    （``scroll_y % rows != 0``）上下两张图会一直 miss、每次都重编码整屏
+    （2520×1260 实测 ~380 ms/张）。0.6.1 的修法就是永远吸附到页边界。
+    """
+    pytest.importorskip("textual_image")
+    pages = _three_pages(tmp_path)
+    monkeypatch.setattr(docpage, "cached_pages", lambda *a, **kw: pages)
+
+    async def scenario():
+        app = _paged_app(pages)
+        async with app.run_test(size=(110, 40)) as pilot:
+            await pilot.pause(0.4)
+            screen = app.screen
+            container = screen.query_one("#paged-scroll")
+            rows = int(container.size.height)
+            assert screen._rows == rows
+            seen = []
+            for key in ("pagedown", "down", "pagedown", "down", "up"):
+                await pilot.press(key)
+                await pilot.pause(0.25)
+                assert container.scroll_y % rows == 0, (key, container.scroll_y, rows)
+                seen.append((int(container.scroll_y), screen.page_index))
+            assert seen == [
+                (rows, 1),
+                (2 * rows, 2),
+                (2 * rows, 2),  # 末页再往下：停住
+                (2 * rows, 2),
+                (rows, 1),
+            ]
+            from myrtui.i18n import t
+
+            assert t("page.header_position", page=2, pages=3) in screen._header_text
+
+    asyncio.run(scenario())
+
+
+def test_paged_screen_never_animates_scroll(monkeypatch, tmp_path):
+    """动画 = 每帧一次整屏重编码（实测一次 PgDn 12 次 / 1.5 s），必须关掉。"""
+    pytest.importorskip("textual_image")
+    pages = _three_pages(tmp_path)
+    monkeypatch.setattr(docpage, "cached_pages", lambda *a, **kw: pages)
+
+    async def scenario():
+        app = _paged_app(pages)
+        async with app.run_test(size=(110, 40)) as pilot:
+            await pilot.pause(0.4)
+            container = app.screen.query_one("#paged-scroll")
+            calls: list[dict] = []
+            real = container.scroll_to
+
+            def spy(*args, **kwargs):
+                calls.append(kwargs)
+                return real(*args, **kwargs)
+
+            container.scroll_to = spy  # 实例属性：覆盖类方法即可观测
+            for key in ("pagedown", "down", "end", "home", "up"):
+                await pilot.press(key)
+                await pilot.pause(0.2)
+            assert calls, "翻页必须经过 scroll_to"
+            assert all(call.get("animate") is False for call in calls), calls
+
+    asyncio.run(scenario())
+
+
+def test_paged_screen_wheel_flips_one_page_with_cooldown(monkeypatch, tmp_path):
+    """滚轮一次一页，且冷却期内不连翻（触控板一次滑动会连发十几个事件）。"""
+    pytest.importorskip("textual_image")
+    pages = _three_pages(tmp_path)
+    monkeypatch.setattr(docpage, "cached_pages", lambda *a, **kw: pages)
+
+    class _Wheel:
+        ctrl = False
+        shift = False
+
+        def __init__(self) -> None:
+            self.stopped = False
+
+        def stop(self) -> None:
+            self.stopped = True
+
+    async def scenario():
+        app = _paged_app(pages)
+        async with app.run_test(size=(110, 40)) as pilot:
+            await pilot.pause(0.4)
+            screen = app.screen
+            container = screen.query_one("#paged-scroll")
+
+            first = _Wheel()
+            container._on_mouse_scroll_down(first)
+            assert first.stopped and screen.page_index == 1
+
+            second = _Wheel()
+            container._on_mouse_scroll_down(second)
+            assert second.stopped
+            assert screen.page_index == 1, "冷却期内的滚轮事件不该再翻一页"
+
+            container._wheel_at = 0.0  # 冷却结束
+            up = _Wheel()
+            container._on_mouse_scroll_up(up)
+            assert up.stopped and screen.page_index == 0
+
+    asyncio.run(scenario())
+
+
+def test_paged_goto_page_clamps(monkeypatch, tmp_path):
+    """``goto_page`` 自带夹取：末页再往下 / 首页再往上都不越界。"""
+    pytest.importorskip("textual_image")
+    pages = _three_pages(tmp_path)
+    monkeypatch.setattr(docpage, "cached_pages", lambda *a, **kw: pages)
+
+    async def scenario():
+        app = _paged_app(pages)
+        async with app.run_test(size=(110, 40)) as pilot:
+            await pilot.pause(0.4)
+            screen = app.screen
+            screen.goto_page(99)
+            assert screen.page_index == 2
+            screen.goto_page(-5)
+            assert screen.page_index == 0
+            assert screen.query_one("#paged-scroll").scroll_y == 0
 
     asyncio.run(scenario())
 

@@ -1,4 +1,4 @@
-"""LaTeX 排版视图：Markdown → 分页位图（只读，可滚动）。
+"""LaTeX 排版视图：Markdown → 分页位图（只读，按整页翻）。
 
 文本预览的公式由 termtex 排成字符网格；这一屏把**整篇**交给浏览器
 （Chrome + KaTeX）排版，正文与行内/块级公式同一套字体与基线。页面默认是
@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 
-from textual import work
+from textual import events, work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
@@ -36,9 +37,79 @@ PLACEHOLDER_ID = "paged-placeholder"
 RESIZE_DEBOUNCE = 0.5
 """resize 之后等这么久再重渲染（拖窗口时不要每帧都印 PDF）。"""
 
+WHEEL_COOLDOWN = 0.12
+"""滚轮翻页冷却（秒）：触控板一次滑动会连发十几个事件，不该连翻十几页。"""
+
 
 class _PageScroll(VerticalScroll):
-    """滚动区：只用来看页号（滚动位置变化时由 Screen 刷新 header）。"""
+    """整页滚动区：静止时永远只有**一张完整页**可见。
+
+    为什么不能自由滚动（0.6.1）：页面是整屏 Sixel 位图，``textual-image``
+    的重编码缓存键包含 ``crop``——滚动一格就换一次 crop，于是每一步都要把
+    上下两张整屏图重新编码（2520×1260 实测 ≈380 ms/张，而且发生在**事件循环**
+    上）；键位默认还带动画，一次 ``PgDn`` 会渲染 10 余帧、每帧都重编码 →
+    画面闪、响应迟钝（一次翻页实测 12 次编码 / 1.5 s）。
+
+    一页本来就等于一屏，吸附到页边界后静止状态只有一张完整页可见，crop 恒定
+    → 缓存命中 → 滚动 0 次编码。代价是没有「半页」过渡，换来的是可用的响应。
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._wheel_at = 0.0
+
+    # 翻页状态只留在 Screen 一份（header 也归它刷），这里只负责把键 / 滚轮
+    # 翻译成「第几页」。用鸭子类型的探测而不是 import：滚动区不反向依赖
+    # PagedDocScreen，单独拿去做控件测试时也不会炸。
+    def _owner(self):
+        try:
+            screen = self.screen
+        except Exception:  # noqa: BLE001 —— 卸载竞态：滚轮事件可能还在队列里
+            return None
+        return screen if hasattr(screen, "goto_page") else None
+
+    def _step(self, delta: int) -> None:
+        owner = self._owner()
+        if owner is not None:
+            owner.goto_page(owner.page_index + delta)
+
+    # 「一行」和「一页」在这里是同一个动作：任何中间偏移都会造出半页。
+    def action_scroll_up(self) -> None:
+        self._step(-1)
+
+    def action_scroll_down(self) -> None:
+        self._step(+1)
+
+    def action_page_up(self) -> None:
+        self._step(-1)
+
+    def action_page_down(self) -> None:
+        self._step(+1)
+
+    def action_scroll_home(self) -> None:
+        owner = self._owner()
+        if owner is not None:
+            owner.goto_page(0)
+
+    def action_scroll_end(self) -> None:
+        owner = self._owner()
+        if owner is not None:
+            owner.goto_page(owner.page_count - 1)
+
+    def _wheel(self, delta: int, event) -> None:
+        # 一律吞掉：不吞的话父类会按 scroll_sensitivity 滚几行，造出半页。
+        event.stop()
+        now = time.monotonic()
+        if now - self._wheel_at < WHEEL_COOLDOWN:
+            return
+        self._wheel_at = now
+        self._step(delta)
+
+    def _on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+        self._wheel(+1, event)
+
+    def _on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        self._wheel(-1, event)
 
 
 class PagedDocScreen(ModalScreen[None], inherit_bindings=False):
@@ -93,6 +164,22 @@ class PagedDocScreen(ModalScreen[None], inherit_bindings=False):
         self._timer = None
         self._header_text = self._relative
         self._page_no = 0
+        self._page_index = 0
+        self._rows = 0
+        """一页占多少**终端行**（= ``_mount_pages`` 挂控件时用的高度）。
+
+        翻页偏移必须用它算：用容器当下的高度会在 resize 中间态漂移，产生
+        「半页」→ 整屏位图重新编码（见 :class:`_PageScroll`）。
+        """
+
+    @property
+    def page_index(self) -> int:
+        """当前页下标（0 起）；还没挂页时为 0。"""
+        return self._page_index
+
+    @property
+    def page_count(self) -> int:
+        return len(self._pages)
 
     # ---------- 组装 ----------
 
@@ -214,7 +301,9 @@ class PagedDocScreen(ModalScreen[None], inherit_bindings=False):
             widgets.append(widget)
         await container.remove_children()
         await container.mount_all(widgets)
+        self._rows = rows
         container.scroll_home(animate=False)
+        self._page_index = 0
         self._set_header(len(pages))
 
     def _widget_class(self):
@@ -246,6 +335,8 @@ class PagedDocScreen(ModalScreen[None], inherit_bindings=False):
         container.mount(status)
         self._header_text = self._relative
         self._page_no = 0
+        self._page_index = 0
+        self._rows = 0
         self.query_one(f"#{HEADER_ID}", Static).update(self._relative)
 
     # ---------- 交互 ----------
@@ -256,6 +347,29 @@ class PagedDocScreen(ModalScreen[None], inherit_bindings=False):
     def action_reload(self) -> None:
         """``r``：丢掉缓存重渲染（换主题 / 怀疑渲染坏了时用）。"""
         self._load(refresh=True)
+
+    def goto_page(self, index: int) -> None:
+        """跳到第 ``index`` 页（0 起，自动夹取）：**整页**吸附、不动画。
+
+        偏移用 ``_rows`` 而不是容器当前高度——resize 中间态里两者会短暂不一致，
+        用错的那个就会落到半页位置，触发整屏 Sixel 重新编码（见 ``_PageScroll``）。
+        """
+        if not self._pages:
+            return
+        index = max(0, min(len(self._pages) - 1, int(index)))
+        try:
+            container = self.query_one(f"#{SCROLL_ID}", _PageScroll)
+        except Exception:  # noqa: BLE001 —— 卸载竞态
+            return
+        rows = max(1, int(self._rows or container.size.height or 1))
+        self._page_index = index
+        container.scroll_to(y=index * rows, animate=False, immediate=True)
+        self._show_page(index)
+
+    def _show_page(self, index: int) -> None:
+        """刷新 header 的页号；``index`` 是 0 起下标。"""
+        self._page_no = index + 1
+        self._set_header(len(self._pages), index + 1)
 
     def on_resize(self, event) -> None:  # noqa: ARG002 —— 只看尺寸
         self.call_after_refresh(self._after_resize)
@@ -278,14 +392,18 @@ class PagedDocScreen(ModalScreen[None], inherit_bindings=False):
         self.call_after_refresh(self._update_page)
 
     def _update_page(self) -> None:
-        """滚动后刷新 header 里的页号（``2/3 页``）。"""
-        if not self._pages or self._spec is None:
+        """位置变了就同步页号（键盘 / 滚轮以外的来源同样走这里）。"""
+        if not self._pages or self._rows <= 0:
             return
-        rows = max(1, self._spec.height // max(1, self._graphics.cell_height or 20))
-        scroll = self.query_one(f"#{SCROLL_ID}", _PageScroll)
-        # 用目标位置（``scroll_target_y``）：平滑滚动期间 ``scroll_y`` 还在动
-        page = min(len(self._pages), int(scroll.scroll_target_y) // rows + 1)
-        if page == self._page_no:
+        try:
+            container = self.query_one(f"#{SCROLL_ID}", _PageScroll)
+        except Exception:  # noqa: BLE001 —— 卸载竞态
             return
-        self._page_no = page
-        self._set_header(len(self._pages), page)
+        # 用目标位置（``scroll_target_y``）：动画期间 ``scroll_y`` 还在动；
+        # 位置按页对齐后这里取整不会漂移。
+        index = int(round(container.scroll_target_y / self._rows))
+        index = max(0, min(len(self._pages) - 1, index))
+        if index == self._page_index:
+            return
+        self._page_index = index
+        self._show_page(index)
