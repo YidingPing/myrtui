@@ -807,3 +807,38 @@ def test_real_pages_have_exact_pixel_size():
     assert pages
     for page in pages:
         assert Image.open(page).size == spec.size
+
+
+def test_paged_screen_focuses_the_scroll_area(monkeypatch, tmp_path):
+    """键盘翻页要求焦点在滚动区。
+
+    ``TerminalApp.AUTO_FOCUS = None``（本仓刻意关掉自动聚焦），所以从 Markdown
+    预览按 ``v`` 进来时新屏没有焦点，``PgUp/PgDn`` 全程失效——只剩滚轮能用。
+    """
+    pytest.importorskip("textual_image")
+    from textual.app import App
+
+    pages = _three_pages(tmp_path)
+    monkeypatch.setattr(docpage, "cached_pages", lambda *a, **kw: pages)
+
+    class Demo(App):
+        AUTO_FOCUS = None  # 与 TerminalApp 同口径
+
+        def on_mount(self) -> None:
+            self.push_screen(
+                PagedDocScreen(
+                    "/tmp/doc.md",
+                    text="# x\n",
+                    graphics=_caps(),
+                    relative="doc.md",
+                )
+            )
+
+    async def scenario():
+        app = Demo()
+        async with app.run_test(size=(110, 40)) as pilot:
+            await pilot.pause(0.4)
+            screen = app.screen
+            assert app.focused is screen.query_one("#paged-scroll")
+
+    asyncio.run(scenario())

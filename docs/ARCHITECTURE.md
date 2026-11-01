@@ -41,6 +41,7 @@ Textual owns layout, focus, input routing and the preview layers.
 | `client/sidebar.py` / `file_tree.py` / `git_panel.py` | left column: tree with git colours + commit history with hover details |
 | `client/context_menu.py` | right-click / keyboard menu over the tree (open, preview, copy path) |
 | `client/docpage.py` / `pageview.py` | paged Markdown reader and the LaTeX page view (KaTeX → Chrome → PDF → PNG, page-snapped scrolling) |
+| `client/overlay.py` | covered screens stop their update timer, so a full-screen bitmap is never re-sent under an overlay |
 | `client/mdpreview.py` / `mathtext.py` / `mathrender.py` / `mathimg.py` / `katex.py` | Markdown rendering, `$math$` handling, `termtex` bridge, KaTeX asset pipeline |
 | `client/imagepreview.py` / `imageprep.py` / `graphics.py` | image preview, decode/resize/compose in workers, Sixel / TGP detection |
 | `client/clipboard.py` | OSC 52 + platform clipboard commands, SSH detection, internal buffer fallback |
@@ -118,6 +119,13 @@ a visible flicker even while "idle"). Polling keeps running so topology, dead
 panes and mouse modes stay current; the diff caches are *not* advanced, so the
 first poll after closing the overlay repaints everything (`ScreenResume` also
 triggers that poll immediately).
+
+Covered screens also **stop their own update timer** (`client/overlay.py`,
+`QuietWhenCovered`). Textual's propagation path re-marks the background screen
+as needing a repaint, which makes "background dirty → top screen repaints →
+background dirty again" a self-sustaining loop: with the page view open over the
+Markdown preview that loop alone emitted two full-screen bitmaps per second.
+The timer resumes when the screen is uncovered; `ScreenResume` repaints it.
 
 - **Markdown**: GFM via Textual's own Markdown widgets; inline/block math is
   rendered by the optional `termtex` binary and degrades to LaTeX source.

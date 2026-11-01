@@ -235,8 +235,9 @@ message; binary/missing/empty files show a readable reason.
 While a preview (Markdown, LaTeX page view, image) is open, the panes behind it
 are **not repainted**: a repaint of a hidden pane would be copied onto the
 overlay and re-send a full-screen bitmap, which is exactly what makes the
-LaTeX page flicker. Closing the preview repaints panes, tabs and the sidebar
-immediately; tmux itself never stops.
+LaTeX page flicker. The screen a preview was opened from is frozen the same
+way. Closing the preview repaints panes, tabs and the sidebar immediately; tmux
+itself never stops.
 
 **LaTeX page view** (`v`): the whole document becomes self-contained HTML with
 KaTeX, Chrome prints it to PDF at exactly the terminal viewport size, and

@@ -26,6 +26,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Static
 
 from myrtui.client import docpage, graphics as graphics_mod
+from myrtui.client.overlay import QuietWhenCovered
 from myrtui.i18n import t
 
 log = logging.getLogger("myrtui.pageview")
@@ -112,7 +113,7 @@ class _PageScroll(VerticalScroll):
         self._wheel(-1, event)
 
 
-class PagedDocScreen(ModalScreen[None], inherit_bindings=False):
+class PagedDocScreen(QuietWhenCovered, ModalScreen[None], inherit_bindings=False):
     """整篇 Markdown 的分页位图视图。"""
 
     BINDINGS = [
@@ -191,6 +192,12 @@ class PagedDocScreen(ModalScreen[None], inherit_bindings=False):
     def on_mount(self) -> None:
         # 颜色放在 CSS 变量之外：Textual 的 CSS 不能插 Python 值，只能挂载后设。
         self._apply_palette()
+        # 键盘翻页要求焦点在滚动区：本仓 ``App.AUTO_FOCUS = None``，从 Markdown
+        # 预览按 ``v`` 进来时焦点还留在下层屏，``PgUp/PgDn`` 会整个失效。
+        try:
+            self.query_one(f"#{SCROLL_ID}", _PageScroll).focus()
+        except Exception:  # noqa: BLE001 —— 未挂载 / 测试替身
+            log.debug("滚动区聚焦失败", exc_info=True)
         # 等一次布局：页面宽度要用滚动区的**内容**宽（不是 app 宽）
         self.call_after_refresh(self._start)
 

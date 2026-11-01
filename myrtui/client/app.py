@@ -32,6 +32,7 @@ from myrtui.client import graphics as graphics_mod
 from myrtui.client.context_menu import ContextMenuScreen
 from myrtui.client.file_tree import FileTree
 from myrtui.client.git_panel import CommitCard, GitLogPanel
+from myrtui.client.overlay import QuietWhenCovered
 from myrtui.client.pane_widget import PaneWidget, parse_sgr_line
 from myrtui.client.separators import DRAG_BUTTONS, Separator
 from myrtui.client.shortcuts import ShortcutHelp, help_width
@@ -331,7 +332,7 @@ class _PointerGesture:
     dragging: bool = False
 
 
-class MainScreen(Screen, inherit_bindings=False):
+class MainScreen(QuietWhenCovered, Screen, inherit_bindings=False):
     """默认屏：**零框架键绑定**，tab/shift+tab/ctrl+c 一律透传给内层 shell（C9.1）。
 
     v0.15 修复锚点（用户反馈「按 Tab 焦点在 pane 之间跳，shell 补全没法用」）：

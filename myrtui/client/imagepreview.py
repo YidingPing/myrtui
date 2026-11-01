@@ -29,6 +29,7 @@ from textual.widgets import Static
 
 from myrtui import pane_commands
 from myrtui.client import graphics as graphics_mod, imageprep
+from myrtui.client.overlay import QuietWhenCovered
 from myrtui.client.mdpreview import (
     DEFAULT_BACKGROUND,
     DEFAULT_FOREGROUND,
@@ -120,7 +121,9 @@ def load_image(
     return LoadedImage(prepared, size=size)
 
 
-class ImagePreviewScreen(ModalScreen[str | None], inherit_bindings=False):
+class ImagePreviewScreen(
+    QuietWhenCovered, ModalScreen[str | None], inherit_bindings=False
+):
     """图片预览（同目录 ←/→ 切换）。关闭时把最后看的那张路径传回去。"""
 
     BINDINGS = [

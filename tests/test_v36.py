@@ -855,3 +855,131 @@ def test_sidebar_skips_painting_under_a_modal(tmp_path):
             assert sidebar._on_top_screen() is True
 
     asyncio.run(scenario())
+
+
+def test_covered_screen_does_not_run_its_update_timer(tmp_path, monkeypatch):
+    """被盖住的屏不许再驱动画帧。
+
+    Textual 会把背景屏的脏区抄到顶层屏、再把背景屏自己标脏（自持循环）；顶层
+    若是整屏 Sixel 页，每帧都是一次整图重发。`QuietWhenCovered` 在空闲回调里
+    不续更新定时器，这里直接钉住「盖住时一次都不跑」。
+    """
+    from textual.screen import ModalScreen, Screen
+
+    app = _app(tmp_path)
+    absolute = str((tmp_path / "notes.md").resolve())
+
+    class _Cover(ModalScreen[None]):
+        """最小模态：只用来盖住下层屏。"""
+
+    ticks: list[object] = []
+    real = Screen._on_timer_update
+
+    def spy(self):
+        ticks.append(self)
+        return real(self)
+
+    monkeypatch.setattr(Screen, "_on_timer_update", spy)
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.3)
+            _preview_over_app(pilot, app, absolute)
+            await pilot.pause(0.4)
+            background = app.screen
+            app.push_screen(_Cover())
+            await pilot.pause(0.3)
+
+            ticks.clear()
+            background.refresh()  # 背景屏有东西要画
+            await pilot.pause(0.6)
+            assert background not in ticks, "被盖住的屏不该跑更新定时器"
+
+            app.pop_screen()
+            await pilot.pause(0.8)
+            assert background in ticks, "回到顶层后必须恢复更新"
+
+    asyncio.run(scenario())
+
+
+def test_paged_view_writes_nothing_while_idle(tmp_path, monkeypatch):
+    """``v`` 屏静止时终端必须一个字节都收不到。
+
+    这就是用户报的「不翻页也闪」：背景屏每脏一次，顶层整屏图就重发一遍
+    （2520×1260 ≈95 KB）。这里让 pane 每轮都变（最坏情况），断言静止 2 s 内
+    写入为空；翻一页则应当只有一次整图写入。
+    """
+    pytest.importorskip("textual_image")
+    from textual.drivers.headless_driver import HeadlessDriver
+
+    import myrtui.client.docpage as docpage
+    from myrtui.client import graphics as graphics_mod
+    from myrtui.client.pageview import PagedDocScreen
+
+    monkeypatch.setattr(
+        HeadlessDriver, "is_headless", property(lambda self: False)
+    )
+    written: list[str] = []
+    monkeypatch.setattr(
+        HeadlessDriver, "write", lambda self, data: written.append(data)
+    )
+
+    page = tmp_path / "page.png"
+    Image = pytest.importorskip("PIL.Image")
+    Image.new("RGB", (210, 84), (230, 218, 190)).save(page)
+    monkeypatch.setattr(docpage, "cached_pages", lambda *a, **kw: [page, page])
+    caps = graphics_mod.Capabilities(
+        sixel=True, cell_width=21, cell_height=42, available=True, mode="sixel"
+    )
+
+    class _Streaming(_FakeBackend):
+        """每轮 poll 内容都变：不修的话每轮都会把背景屏画脏。"""
+
+        def __init__(self):
+            super().__init__()
+            self.ticks = 0
+
+        def poll(self, offsets):
+            self.ticks += 1
+            panes = list(self.panes)
+            return panes, {
+                pane.pane_id: CaptureResult(
+                    text=f"tick {self.ticks}\n", offset=0
+                )
+                for pane in panes
+            }
+
+    app = TerminalApp(_Streaming(), _project(tmp_path))
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.3)
+            # 用户路径：先打开 Markdown 预览，再按 `v` 进排版视图。下层预览屏
+            # 在推送瞬间是脏的，不修的话 Textual 会把它「脏 → 顶层重绘 → 再脏」
+            # 自持成 2 帧/秒的整图重发。
+            app.push_screen(
+                MarkdownPreviewScreen(
+                    str(tmp_path / "notes.md"), relative="notes.md"
+                )
+            )
+            await pilot.pause(1.2)
+            app.push_screen(
+                PagedDocScreen(
+                    str(tmp_path / "notes.md"),
+                    text="# t\n",
+                    graphics=caps,
+                    relative="notes.md",
+                )
+            )
+            await pilot.pause(2.0)  # 首帧（含编码）都留在预热里
+
+            written.clear()
+            await pilot.pause(2.0)
+            assert written == [], "静止的位图屏不该再往终端写任何东西"
+
+            written.clear()
+            await pilot.press("pagedown")
+            await pilot.pause(1.0)
+            assert written and any("\x1bP" in chunk for chunk in written)
+
+    asyncio.run(scenario())

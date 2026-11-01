@@ -41,6 +41,7 @@ from textual.widgets import Markdown, Static
 from myrtui import fileview
 from myrtui.client import graphics as graphics_mod
 from myrtui.client import imageprep, mathrender
+from myrtui.client.overlay import QuietWhenCovered
 from myrtui.client.mathtext import (
     inline_math_tokens,
     math_parser_factory,
@@ -363,7 +364,7 @@ class MathMarkdown(Markdown):
         return super().unhandled_token(token)
 
 
-class MarkdownPreviewScreen(ModalScreen[None], inherit_bindings=False):
+class MarkdownPreviewScreen(QuietWhenCovered, ModalScreen[None], inherit_bindings=False):
     """Markdown 全屏只读预览（不依赖 pane）。"""
 
     RESIZE_DEBOUNCE = 0.4
