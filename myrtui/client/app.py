@@ -87,6 +87,12 @@ IDLE_INTERVAL_MIN = 0.05  # B0 下界：0.03 级手滑值 = 33 fork/s 高频，�
 IDLE_INTERVAL_MAX = 5.0  # B0 上界：防手滑打错量级
 HIGH_FREQ_TICKS = 3  # 输入后保持 30ms 高频的 tick 数
 TICK = 0.03
+# 流式画面（tail -f / 图像动画）：抓到内容在变就把轮询提到 STREAM_INTERVAL，
+# 静止后自动回落到 _idle_interval。0.6.0 实测（4 pane）：空闲期整体提到
+# 0.05 会让静置 CPU 从 5.7% 涨到 9.6%，而画面在变时用户要的就是这个帧率。
+# 注意实际帧率受 30 ms tick 量化：0.05 的目标落在 0.06 → 约 17 次/秒。
+STREAM_INTERVAL = 0.05
+STREAM_HOLD = 0.3  # 最后一次看到变化后保持提频的时长（秒）
 SCROLL_STEP = 3  # 滚轮步进 3 行（§11）
 PREFIX_TIMEOUT = 1.0  # Ctrl-a 前缀超时（§10.1）
 HELP_SHOW_DELAY = 0.15  # v0.22：悬停 `?` 多久弹出快捷键浮层（太短扫过即闪）
@@ -626,6 +632,12 @@ class TerminalApp(App, inherit_bindings=False):
         # 覆盖默认 IDLE_INTERVAL；后台/次要实例设 0.5 之类降频（2 次/s）
         self._idle_interval: float = resolve_idle_interval(
             _os.environ.get("MYRTUI_IDLE_INTERVAL")
+        )
+        # 流式提频（0.6.0）：capture 内容在变时短暂用 STREAM_INTERVAL，静止回落。
+        # 用户显式降过频（> 默认，例如后台实例 0.5）就不加速——那正是他要的省电。
+        self._stream_until = 0.0
+        self._stream_interval = (
+            STREAM_INTERVAL if self._idle_interval <= IDLE_INTERVAL else None
         )
         # B1 §4.2 可选遥测：MYRTUI_LOOP_DEBUG=1 时用探针把事件循环迟到
         # > 30ms 的分布写到 stderr（真机验收期给 §7.2 决策门供数据；
@@ -1789,7 +1801,15 @@ class TerminalApp(App, inherit_bindings=False):
                 self._high_ticks -= 1
                 self._next_poll = now + TICK
             else:
-                self._next_poll = now + self._idle_interval  # B0：可调空闲节拍
+                interval = self._idle_interval
+                # 流式画面（tail -f / 图像动画）：内容在变时保持 20 fps。
+                # 用户显式降过频（_stream_interval is None）不加速。
+                if (
+                    self._stream_interval is not None
+                    and now < self._stream_until
+                ):
+                    interval = self._stream_interval
+                self._next_poll = now + interval
 
     def _burst(self) -> None:
         """输入/paste 后：立即 capture 一次，随后保持几个 30ms tick（§8）。"""
@@ -1999,6 +2019,7 @@ class TerminalApp(App, inherit_bindings=False):
         info_by_id = {p.pane_id: p for p in panes}
         labels: list[str] = []
         deads: list[bool] = []
+        changed = False
         for i, pid in enumerate(self._pane_ids):
             widget = self.query_one(f"#pane-{i}", PaneWidget)
             info = info_by_id.get(pid)
@@ -2059,6 +2080,7 @@ class TerminalApp(App, inherit_bindings=False):
             # 重建）；元数据（鼠标级别 / offset / dead / 宽高等）照常更新
             if pid != self._frozen_pane and self._cache.get(pid) != diff_key:
                 self._cache[pid] = diff_key
+                changed = True
                 lines = [
                     parse_sgr_line(line, info.width)
                     for line in cap.text.splitlines()
@@ -2074,6 +2096,10 @@ class TerminalApp(App, inherit_bindings=False):
                 f"{i + 1}:dead" if info.dead else f"{i + 1}:{info.command}"
             )
             deads.append(info.dead)
+        if changed:
+            # 内容在动 → 提频（0.6.0：tail -f / 图像动画跟读更顺）；静止后
+            # STREAM_HOLD 到期自动回落 _idle_interval，静置成本不变
+            self._stream_until = time.monotonic() + STREAM_HOLD
         if labels != self._tab_labels or deads != self._tab_deads:
             self._tab_labels, self._tab_deads = labels, deads
             self._update_tabs()

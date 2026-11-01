@@ -20,6 +20,7 @@ from myrtui.client.app import (
     IDLE_INTERVAL,
     IDLE_INTERVAL_MAX,
     IDLE_INTERVAL_MIN,
+    STREAM_INTERVAL,
     TerminalApp,
 )
 from myrtui.client.topbar import TopBar
@@ -61,6 +62,8 @@ class FakeBackend:
         self.poll_delay = poll_delay
         self.poll_error = poll_error
         self.pane = make_pane()
+        # 可变的 capture 文本：流式提频用例要能模拟「内容在变」
+        self.capture_text = "cap-{pid}\n"
 
     def list_panes(self) -> list[PaneInfo]:
         self.calls.append("list_panes")
@@ -74,7 +77,7 @@ class FakeBackend:
         if self.poll_error is not None:
             raise self.poll_error
         caps = {
-            pid: CaptureResult(text=f"cap-{pid}\n", offset=k)
+            pid: CaptureResult(text=self.capture_text.format(pid=pid), offset=k)
             for pid, (k, _h) in offsets.items()
         }
         return [self.pane], caps
@@ -158,6 +161,78 @@ def test_b0_tick_schedules_with_env_interval(monkeypatch, raw, expected, app_roo
             before = time.monotonic()
             app._tick()
             assert before + expected - 0.05 <= app._next_poll <= before + expected + 0.05
+
+    asyncio.run(scenario())
+
+
+# ---------- 0.6.0：流式画面提频（内容在变 → 20 fps，静止回落） ----------
+
+
+async def _poll_now(app, pilot) -> None:
+    app._request_poll()
+    await pilot.pause(0.2)
+
+
+def test_stream_cadence_arms_only_when_content_changes(app_root):
+    """内容变化才提频；不变就不重新计时（静置成本保持原样）。"""
+
+    async def scenario():
+        backend = FakeBackend()
+        app = TerminalApp(backend, app_root)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause(0.5)  # 首轮 poll：空 → 内容，本身就算一次变化
+            app._tick_timer.pause()
+            armed = app._stream_until
+            assert armed > 0
+
+            await _poll_now(app, pilot)  # 内容没变
+            assert app._stream_until == armed
+
+            backend.capture_text = "changed-{pid}\n"
+            await _poll_now(app, pilot)  # 内容变了
+            assert app._stream_until > armed
+
+    asyncio.run(scenario())
+
+
+def test_tick_uses_stream_interval_while_streaming(app_root):
+    """提频窗口内 _tick 用 STREAM_INTERVAL 调度（不是 0.15）。"""
+
+    async def scenario():
+        app = TerminalApp(FakeBackend(), app_root)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause(0.4)
+            app._tick_timer.pause()
+            app._high_ticks = 0
+            app._next_poll = 0.0
+            app._stream_until = time.monotonic() + 1.0
+            before = time.monotonic()
+            app._tick()
+            assert (
+                before + STREAM_INTERVAL - 0.02
+                <= app._next_poll
+                <= before + STREAM_INTERVAL + 0.05
+            )
+
+    asyncio.run(scenario())
+
+
+def test_stream_cadence_respects_slower_idle_interval(monkeypatch, app_root):
+    """显式降过频（后台实例 0.5）不加速：那正是用户要的省电。"""
+    monkeypatch.setenv("MYRTUI_IDLE_INTERVAL", "0.5")
+
+    async def scenario():
+        app = TerminalApp(FakeBackend(), app_root)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause(0.4)
+            app._tick_timer.pause()
+            assert app._stream_interval is None
+            app._high_ticks = 0
+            app._next_poll = 0.0
+            app._stream_until = time.monotonic() + 1.0  # 即便窗口在，也不提速
+            before = time.monotonic()
+            app._tick()
+            assert before + 0.45 <= app._next_poll <= before + 0.55
 
     asyncio.run(scenario())
 
