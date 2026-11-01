@@ -100,7 +100,9 @@ window/pane 创建时快照选项，`Ctrl-a r` 重开的也是建窗时记录的
 | 变量 | 作用 |
 |---|---|
 | `MYRTUI_LANG` | 界面语言：`en`（默认）/ `zh_CN`。优先级：`--lang` > `MYRTUI_LANG` > `config.json` 的 `lang` > `LC_ALL`/`LANG` 是否 `zh*` > `en`；改完重启生效。 |
-| `MYRTUI_IDLE_INTERVAL` | 空闲轮询间隔（秒，float，默认 `0.15`；非法/非正值回落默认，合法值夹取 `0.05–5.0`）。多实例时给**后台/次要实例**降频：`MYRTUI_IDLE_INTERVAL=0.5 myrtui`（空闲抓屏 6.7 → 2 次/s，系统级 fork 与 CPU 同降）。活跃实例保持默认即可。 |
+| `MYRTUI_IDLE_INTERVAL` | 空闲轮询间隔（秒，float，默认 `0.15`；非法/非正值回落默认，合法值夹取 `0.05–5.0`）。画面持续变化时（`tail -f`、图像动画）myrtui 自己提到约 17 次/秒，静止后回落，不必手动调。多实例时给**后台/次要实例**降频：`MYRTUI_IDLE_INTERVAL=0.5 myrtui`（空闲抓屏 6.7 → 2 次/s，系统级 fork 与 CPU 同降；显式调大后不再自动提频）。活跃实例保持默认即可。 |
+| `MYRTUI_TRANSPORT` | tmux 传输方式：`auto`（默认，常驻 `tmux -C` 客户端；建不起来时自动回落逐次起进程）/ `exec`（每次调用起一个 tmux 进程，旧路径）/ `control`（强制常驻，建不起来直接报错）。非法值告警后按 `auto`。 |
+| `MYRTUI_LOG` | TUI 接管终端后 warning 写到哪里（默认平台日志目录：macOS `~/Library/Logs/myrtui/myrtui.log`、Linux `~/.local/state/myrtui/log/`）；空串 = 不落盘。启动前的 CLI 错误仍走 stderr。 |
 | `MYRTUI_LOOP_DEBUG` | `=1` 时把事件循环迟到 > 30ms 的事件写到 stderr（性能遥测，排障/验收用，默认关闭、无行为影响）。 |
 | `MYRTUI_MOUSE_DEBUG` | `=1` 时把每个鼠标事件与拖拽结论写进 `<tmp>/myrtui-mouse-debug-<pid>.log`（排障用，默认关闭）。 |
 | `MYRTUI_COPY_ON_SELECT` | 左键拖拽松手后是否**自动复制**（默认 `1`；`0/false/no/off` 关闭）。关闭后选区保持高亮 10s，按 `Ctrl-a c` 复制，其他键 / 点击 / 滚轮取消。 |
@@ -115,7 +117,8 @@ window/pane 创建时快照选项，`Ctrl-a r` 重开的也是建窗时记录的
 > `MYRTUI_IDLE_INTERVAL` **由用户按实例启动时手动指定**：myrtui 无法可靠感知
 > 「终端窗口是否在前台」（终端焦点上报无标准通道），自动降频不可靠，故不做
 > 自动切换（内部性能计划 §2.2）。输入高频段（30ms）与鼠标节流不受影响——
-> 那是活跃实例的参数。
+> 那是活跃实例的参数。**画面内容在变时的提频不在此列**：它看的是 capture
+> 有没有变化，不看焦点，静止后自动回落。
 
 ### 实例管理（`ls` / `attach` / `stop`）
 

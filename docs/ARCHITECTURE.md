@@ -29,7 +29,7 @@ Textual owns layout, focus, input routing and the preview layers.
 |---|---|
 | `cli.py` | argparse, instance identity, lock file + takeover protocol, `--root/--shell/--scrollback/--lang`, `ls` / `attach` / `stop` wiring, layout file paths |
 | `instances.py` | instance discovery and lifecycle: lock probing, `ls` table/JSON, attach/stop target resolution, cooperative shutdown marks |
-| `tmux_backend.py` | every tmux invocation: session creation, pane split/close/respawn, `capture-pane`, `send-keys`, `paste-buffer`, resize, `set-clipboard` |
+| `tmux_backend.py` | every tmux invocation: session creation, pane split/close/respawn, `capture-pane`, `send-keys`, `paste-buffer`, resize, `set-clipboard`; the two transports (`exec` / resident `control`), command quoting and framing |
 | `i18n.py` / `locales/` | UI language resolution (`--lang` > `MYRTUI_LANG` > `config.json` > locale > `en`), flat `key -> text` catalogs, `t()` with `en` fallback; no Textual import, no module-level `t()` |
 | `layout_state.py` | splitter ratios: `0..1` per dimension, atomic JSON write, format version 2, corrupt file → defaults |
 | `gitlog.py` / `gitstat.py` | `git log` (repo-wide and `--follow` per file) and `git status --porcelain -z -uall` parsing, in worker threads |
@@ -65,14 +65,44 @@ Textual owns layout, focus, input routing and the preview layers.
 1. `capture-pane -p` (with `-N` to keep trailing spaces) for each pane.
 2. Text is turned into Textual renderables; unchanged panes are skipped.
 3. Idle cadence is `MYRTUI_IDLE_INTERVAL` (default 0.15 s), raised to ~30 ms
-   for a few ticks after input. Backend calls run off the event loop, so a slow
-   tmux never blocks the UI thread.
+   for a few ticks after input, and raised to ~17 Hz while captures keep
+   changing (a `tail -f` or an animating image) until 0.3 s of stillness.
+   Backend calls run off the event loop, so a slow tmux never blocks the UI
+   thread.
 4. Paint is *display only*: keys, paste and mouse are injected back into tmux;
    myrtui never interprets the pane's output.
 
 Consequences worth knowing: echo waits for the next poll (~150 ms idle), and
 soft-wrapped lines appear as separate captured lines. Both are recorded in
 `README.md` under limitations.
+
+## Transport
+
+Two ways to talk to the tmux server, chosen by `MYRTUI_TRANSPORT` (default
+`auto`):
+
+- **`exec`** — one `tmux` process per call. Simple, and the fallback: every
+  keystroke and every capture costs a process launch (4.5–5 ms each on an idle
+  box, 8–16 ms inside the app once rendering competes for the GIL).
+- **`control`** — one resident `tmux -C attach` client for the whole session.
+  Commands are written as a single line, output is framed by random START/END
+  sentinels (`%begin`/`%end` block markers are matched on the exact triple the
+  block opened with, because pane content may itself start with `%`), and one
+  round trip costs 0.06–0.3 ms. `auto` uses it when `attach` succeeds and falls
+  back to `exec` with a warning otherwise.
+
+Both paths share the command builder and parser, so `check=False` semantics and
+`stdout` line counts are identical; the transport only decides who executes.
+That is also why there is no terminal emulation: myrtui paints captured text and
+never interprets `%output`. Things the line protocol cannot carry — stdin
+(`load-buffer`/paste), arguments containing newlines, `kill-server`, the
+pre-client lifecycle commands — always go through `exec`. A dropped control
+client is closed, the current command runs on `exec`, and reconnection is
+attempted in the background (1 s / 2 s / 5 s) without surfacing a new UI state.
+
+Warnings never go to stderr once Textual owns the terminal (that would paint on
+the cursor); they are written to the platform log dir (`MYRTUI_LOG` overrides,
+empty disables).
 
 ## Preview layers
 

@@ -310,7 +310,8 @@ you can see what was copied.
 |---|---|---|
 | `MYRTUI_LANG` | `en` | UI language: `en` / `zh_CN`. Also read from `config.json`'s `lang` and from a `zh*` locale; `--lang` wins for one run |
 | `MYRTUI_EDITOR` | — | editor for "Open" (see resolution order above) |
-| `MYRTUI_IDLE_INTERVAL` | `0.15` | idle capture interval in seconds (clamped to `0.05–5.0`); raise it for secondary instances (`MYRTUI_IDLE_INTERVAL=0.5 myrtui`) |
+| `MYRTUI_IDLE_INTERVAL` | `0.15` | idle capture interval in seconds (clamped to `0.05–5.0`); while content keeps changing the loop speeds up to ~17 Hz by itself; raise it for secondary instances (`MYRTUI_IDLE_INTERVAL=0.5 myrtui`) |
+| `MYRTUI_TRANSPORT` | `auto` | tmux transport: `auto` = a resident `tmux -C` client, falling back to one process per call when attach fails; `exec` = one process per call (old path); `control` = require the resident client (errors out if it cannot start) |
 | `MYRTUI_COPY_ON_SELECT` | `1` | auto-copy on drag release (`0/false/no/off` disables) |
 | `MYRTUI_DRAG_SELECT` | `always` | `always` = drag always selects; `app` = forward drag when the program asked for mouse |
 | `MYRTUI_GRAPHICS` | `auto` | `auto` / `sixel` / `tgp` / `unicode` / `off` (preview bitmaps only) |
@@ -320,11 +321,15 @@ you can see what was copied.
 | `MYRTUI_CHROME` | — | Chrome/Chromium binary for the LaTeX page view |
 | `MYRTUI_PDFTOCAIRO` | — | PDF → PNG converter (`pdftocairo` preferred, then `pdftoppm`) |
 | `MYRTUI_LOOP_DEBUG` | — | `=1` logs event-loop delays > 30 ms to stderr (profiling) |
+| `MYRTUI_LOG` | platform log dir | where warnings go once the TUI owns the terminal (`~/Library/Logs/myrtui/myrtui.log` on macOS, `~/.local/state/myrtui/log/` on Linux); empty disables |
 | `MYRTUI_MOUSE_DEBUG` | — | `=1` logs every mouse event to `<tmp>/myrtui-mouse-debug-<pid>.log` |
 
 Idle throttling is manual on purpose: there is no portable way to know whether
 the terminal window is focused, so myrtui does not guess. Input bursts still run
-at ~30 ms and mouse throttling is unaffected.
+at ~30 ms and mouse throttling is unaffected. The one exception is content:
+while captures keep changing (a `tail -f`, an animating image) the loop speeds
+itself up to ~17 Hz and drops back to the idle interval 0.3 s after the last
+change — that does not depend on focus.
 
 ## Known limitations
 

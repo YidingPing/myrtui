@@ -98,7 +98,9 @@ myrtui                 # 首次运行创建会话，之后都是 attach
 |---|---|
 | `MYRTUI_LANG` | 界面语言：`en`（默认）/ `zh_CN`；`--lang` 可单次覆盖 |
 | `MYRTUI_EDITOR` | 「打开」用的编辑器（否则 `$EDITOR` / `$VISUAL` / `micro` → `vim` → `vi`） |
-| `MYRTUI_IDLE_INTERVAL` | 空闲抓屏间隔，秒（默认 `0.15`，夹取 `0.05–5.0`）；后台实例可调大 |
+| `MYRTUI_IDLE_INTERVAL` | 空闲抓屏间隔，秒（默认 `0.15`，夹取 `0.05–5.0`）；画面持续变化时自动提到约 17 次/秒；后台实例可调大 |
+| `MYRTUI_TRANSPORT` | tmux 传输：`auto`（默认，常驻 `tmux -C` 客户端，失败回落逐次起进程）/ `exec`（每次调用起一个进程）/ `control`（强制常驻） |
+| `MYRTUI_LOG` | TUI 接管终端后 warning 写到哪里（默认平台日志目录，如 `~/Library/Logs/myrtui/myrtui.log`；空串关闭） |
 | `MYRTUI_COPY_ON_SELECT` | 拖拽松手自动复制（默认 `1`；`0` 时用 `Ctrl-a c` 手动复制） |
 | `MYRTUI_DRAG_SELECT` | `always`（默认）= 拖拽永远选字；`app` = 程序请求鼠标时把拖拽还给它 |
 | `MYRTUI_GRAPHICS` | 位图协议：`auto`（默认）/ `sixel` / `tgp` / `unicode` / `off` |
