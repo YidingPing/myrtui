@@ -45,6 +45,9 @@ log = logging.getLogger("myrtui")
 
 APP_NAME = "myrtui"
 
+# TUI 接管终端后的日志文件（见 redirect_logging_to_file）；空串 = 关闭落盘
+LOG_ENV = "MYRTUI_LOG"
+
 # §11 / §12 P2：--scrollback 取值范围（0 无意义，过大值等于让用户手滑吃内存）
 MAX_SCROLLBACK = 1_000_000
 
@@ -73,6 +76,21 @@ def _data_dir() -> str:
     return data_dir
 
 
+def _log_file_path() -> str | None:
+    """日志文件位置：``MYRTUI_LOG`` 优先，否则 platformdirs 的 user_log_dir。
+
+    空串（``MYRTUI_LOG=""``）= 关闭落盘；测试与 CI 用它把日志赶到临时目录。
+    """
+    raw = os.environ.get(LOG_ENV)
+    if raw is not None:
+        return raw.strip() or None
+    try:
+        log_dir = platformdirs.user_log_dir(APP_NAME, appauthor=False)
+    except OSError:
+        return None
+    return os.path.join(log_dir, "myrtui.log")
+
+
 def redirect_logging_to_file() -> str | None:
     """TUI 接管终端后把日志改写到文件，返回日志路径（失败则 ``None``）。
 
@@ -85,23 +103,32 @@ def redirect_logging_to_file() -> str | None:
     启动前的 CLI 错误不受影响：它们走 ``print(..., file=sys.stderr)``。
     """
     root = logging.getLogger()
+    path = _log_file_path()
     handler: logging.Handler
-    path: str | None
-    try:
-        log_dir = platformdirs.user_log_dir(APP_NAME, appauthor=False)
-        os.makedirs(log_dir, exist_ok=True)
-        path = os.path.join(log_dir, "myrtui.log")
-        handler = logging.FileHandler(path, encoding="utf-8")
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-        )
-    except OSError:
+    if path is None:
         handler = logging.NullHandler()
-        path = None
-    # FileHandler 也是 StreamHandler 的子类，必须先排除它
+        handler.set_name("myrtui-null")
+    else:
+        try:
+            parent = os.path.dirname(path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            file_handler = logging.FileHandler(path, encoding="utf-8")
+            file_handler.set_name("myrtui-file")
+            file_handler.setFormatter(
+                logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+            )
+            handler = file_handler
+        except OSError:
+            handler = logging.NullHandler()
+            handler.set_name("myrtui-null")
+            path = None
     for old in list(root.handlers):
-        if isinstance(old, logging.StreamHandler) and not isinstance(
-            old, logging.FileHandler
+        # FileHandler 也是 StreamHandler：先按名字收掉本函数自己的 handler，
+        # 再收掉 stderr 的流 handler（TUI 接管后它只会污染界面）
+        if (old.name or "").startswith("myrtui") or (
+            isinstance(old, logging.StreamHandler)
+            and not isinstance(old, logging.FileHandler)
         ):
             root.removeHandler(old)
             old.close()

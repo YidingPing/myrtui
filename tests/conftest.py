@@ -71,6 +71,17 @@ def _pin_ui_language(request, monkeypatch, tmp_path):
     i18n.reset_lang()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_log_file(monkeypatch, tmp_path):
+    """日志落盘指到临时路径：TUI 接管后的 warning 不许写进用户 HOME。
+
+    ``cli.redirect_logging_to_file`` 在真机上写 ``platformdirs.user_log_dir``；
+    测试跑 ``cli.main`` 时也会走到那里——不隔离的话，一次全量会把 pytest 的
+    临时路径写进用户的 ``~/Library/Logs``。
+    """
+    monkeypatch.setenv("MYRTUI_LOG", str(tmp_path / "myrtui.log"))
+
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers", "no_lang_pin: 不让 autouse 夹具钉 MYRTUI_LANG（语言探测类用例）"

@@ -618,21 +618,41 @@ def test_tui_logging_goes_to_file(tmp_path, monkeypatch, capsys):
 
     from myrtui import cli
 
+    monkeypatch.delenv(cli.LOG_ENV, raising=False)
     monkeypatch.setattr(
         cli.platformdirs, "user_log_dir", lambda *a, **k: str(tmp_path)
     )
     root = logging.getLogger()
     before = list(root.handlers)
     level = root.level
+
+    def flush() -> None:
+        for handler in root.handlers:
+            handler.flush()
+
     try:
         path = cli.redirect_logging_to_file()
         assert path == str(tmp_path / "myrtui.log")
         root.setLevel(logging.WARNING)
         logging.getLogger("myrtui.tmux").warning("boom-transport-lost")
-        for handler in root.handlers:
-            handler.flush()
+        flush()
         assert "boom-transport-lost" in open(path, encoding="utf-8").read()
         assert "boom-transport-lost" not in capsys.readouterr().err
+
+        # 显式路径优先（测试 / CI 用它把日志赶出 HOME）
+        custom = tmp_path / "nested" / "custom.log"
+        monkeypatch.setenv(cli.LOG_ENV, str(custom))
+        assert cli.redirect_logging_to_file() == str(custom)
+        logging.getLogger("myrtui.tmux").warning("boom-custom")
+        flush()
+        assert "boom-custom" in custom.read_text(encoding="utf-8")
+
+        # 空串 = 关闭落盘，且绝不回落到 stderr
+        monkeypatch.setenv(cli.LOG_ENV, "")
+        assert cli.redirect_logging_to_file() is None
+        logging.getLogger("myrtui.tmux").warning("boom-off")
+        flush()
+        assert "boom-off" not in capsys.readouterr().err
     finally:
         root.setLevel(level)
         for handler in list(root.handlers):
