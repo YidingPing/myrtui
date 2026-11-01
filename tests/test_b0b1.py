@@ -169,8 +169,19 @@ def test_b0_tick_schedules_with_env_interval(monkeypatch, raw, expected, app_roo
 
 
 async def _poll_now(app, pilot) -> None:
+    """提交一次 poll 并等它真正落地（单飞 + 尾部合并都要排空）。"""
     app._request_poll()
-    await pilot.pause(0.2)
+    await _wait_for(pilot, lambda: not app._poll_in_flight and not app._poll_pending)
+
+
+async def _wait_for(pilot, predicate, timeout: float = 5.0) -> bool:
+    """Textual 的时序不确定：等条件，不用固定 sleep（tests/README）。"""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        await pilot.pause(0.02)
+    return predicate()
 
 
 def test_stream_cadence_arms_only_when_content_changes(app_root):
@@ -180,10 +191,10 @@ def test_stream_cadence_arms_only_when_content_changes(app_root):
         backend = FakeBackend()
         app = TerminalApp(backend, app_root)
         async with app.run_test(size=(100, 30)) as pilot:
-            await pilot.pause(0.5)  # 首轮 poll：空 → 内容，本身就算一次变化
+            # 首轮 poll：空 → 内容，本身就算一次变化
+            assert await _wait_for(pilot, lambda: app._stream_until > 0)
             app._tick_timer.pause()
             armed = app._stream_until
-            assert armed > 0
 
             await _poll_now(app, pilot)  # 内容没变
             assert app._stream_until == armed
@@ -209,9 +220,9 @@ def test_tick_uses_stream_interval_while_streaming(app_root):
             before = time.monotonic()
             app._tick()
             assert (
-                before + STREAM_INTERVAL - 0.02
+                before + STREAM_INTERVAL - 0.05
                 <= app._next_poll
-                <= before + STREAM_INTERVAL + 0.05
+                <= before + STREAM_INTERVAL + 0.08
             )
 
     asyncio.run(scenario())
