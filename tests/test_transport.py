@@ -585,12 +585,9 @@ def test_non_utf8_output_keeps_the_channel_alive(control_backend):
         assert len(caps[pid].text.splitlines()) == panes[0].height
     assert control_backend.control_active
     assert control_backend.reconnects == 0
-    # 两条路径对同一段内容解码一致（exec 也是 utf-8 + replace）
-    exec_backend = TmuxBackend(control_backend.socket, control_backend.session)
-    assert (
-        control_backend.poll({pid: (0, 30)})[1][pid].text
-        == exec_backend.poll({pid: (0, 30)})[1][pid].text
-    )
+    # 两条路径的解码一致性由静止画面上的等价用例覆盖
+    # （test_poll_matches_exec_after_resize / test_show_buffer_matches_exec）：
+    # 这里 pane 还在滚动，连续两次 capture 本来就可能不同，不能逐字节比。
 
 
 def test_idle_output_is_not_queued(control_backend):
