@@ -73,6 +73,42 @@ def _data_dir() -> str:
     return data_dir
 
 
+def redirect_logging_to_file() -> str | None:
+    """TUI 接管终端后把日志改写到文件，返回日志路径（失败则 ``None``）。
+
+    **stderr 就是用户的屏幕**：TUI 用 stdout 画屏，一条 ``log.warning`` 会直接
+    落在光标处、被下一次重绘盖掉，表现为「反复闪一行字」。0.6.0.dev1 真机实录：
+    控制客户端掉线时满屏闪 ``control transport lost``。
+
+    只在 WARNING 以上落盘（root level 由 ``basicConfig`` 定为 WARNING），
+    不滚动、不删旧文件；建不出目录时**宁可不记日志**，也不许污染界面。
+    启动前的 CLI 错误不受影响：它们走 ``print(..., file=sys.stderr)``。
+    """
+    root = logging.getLogger()
+    handler: logging.Handler
+    path: str | None
+    try:
+        log_dir = platformdirs.user_log_dir(APP_NAME, appauthor=False)
+        os.makedirs(log_dir, exist_ok=True)
+        path = os.path.join(log_dir, "myrtui.log")
+        handler = logging.FileHandler(path, encoding="utf-8")
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+        )
+    except OSError:
+        handler = logging.NullHandler()
+        path = None
+    # FileHandler 也是 StreamHandler 的子类，必须先排除它
+    for old in list(root.handlers):
+        if isinstance(old, logging.StreamHandler) and not isinstance(
+            old, logging.FileHandler
+        ):
+            root.removeHandler(old)
+            old.close()
+    root.addHandler(handler)
+    return path
+
+
 def lock_path_for(digest: str) -> str:
     """锁文件位置：<data>/myrtui/<hash>.lock（§6 M17：user_data_dir）。
 
@@ -521,6 +557,8 @@ def main(argv: list[str] | None = None) -> int:
         layout_path=layout_path_for(digest),
         graphics=graphics,
     )
+    # TUI 即将接管终端：日志改落盘，避免 warning 画到光标处（见函数文档）
+    redirect_logging_to_file()
     try:
         app.run()
     finally:

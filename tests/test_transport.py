@@ -207,6 +207,7 @@ def _bare_client() -> ControlClient:
     client._queue = queue.Queue()
     client._lock = threading.Lock()
     client._closed = threading.Event()
+    client._busy = threading.Event()
     client.proc = _FakeProc()
     return client
 
@@ -557,6 +558,89 @@ def test_paste_uses_exec_while_control_is_active(control_backend):
         lambda: "MYRTUI_PASTE_OK"
         in control_backend.poll({pid: (0, 30)})[1][pid].text
     )
+
+
+# ---------------------------------------------------------------- 真机反馈（dev1）
+
+
+def test_non_utf8_output_keeps_the_channel_alive(control_backend):
+    """pane 输出非 UTF-8 字节不能让读线程死掉（0.6.0.dev1 真机 bug）。
+
+    真机现象：图像/二进制输出时控制通道反复失联，每条命令降级 exec 并重连。
+    根因是读线程严格解码抛 ``UnicodeDecodeError``。修法：utf-8 + replace，
+    非法字节显示成 ``\\ufffd``，通道不断。
+    """
+    pid = control_backend.list_panes()[0].pane_id
+    _type_until(control_backend, pid, "echo READY", "READY")
+    for round_ in range(20):
+        # 命令本身带 marker：marker 出现说明这条命令确实执行了，那么它输出的
+        # 非 UTF-8 字节也一定经过了控制流（旧实现在这里会立刻掉线）。
+        control_backend.send_text(pid, f"printf '\\377\\376'; echo MARK{round_}")
+        control_backend.send_keys(pid, "Enter")
+        assert _wait_until(
+            lambda: f"MARK{round_}"
+            in control_backend.poll({pid: (0, 30)})[1][pid].text
+        )
+        panes, caps = control_backend.poll({pid: (0, 30)})
+        assert len(caps[pid].text.splitlines()) == panes[0].height
+    assert control_backend.control_active
+    assert control_backend.reconnects == 0
+    # 两条路径对同一段内容解码一致（exec 也是 utf-8 + replace）
+    exec_backend = TmuxBackend(control_backend.socket, control_backend.session)
+    assert (
+        control_backend.poll({pid: (0, 30)})[1][pid].text
+        == exec_backend.poll({pid: (0, 30)})[1][pid].text
+    )
+
+
+def test_idle_output_is_not_queued(control_backend):
+    """闲置时的 %output 不进队列：否则图像/洪流会把命令埋进积压里等超时。"""
+    pid = control_backend.list_panes()[0].pane_id
+    _type_until(control_backend, pid, "echo READY", "READY")
+    control_backend.send_text(pid, "yes myrtui-flood")
+    control_backend.send_keys(pid, "Enter")
+    time.sleep(0.6)
+    client = control_backend._control
+    assert client is not None
+    # 先排掉「上一条命令收尾时在途」的行，再观察：闲置期不应有新行进队列
+    while not client._queue.empty():
+        client._queue.get_nowait()
+    time.sleep(0.4)
+    assert client._queue.qsize() == 0, "闲置期不应堆积 %output"
+    control_backend.send_keys(pid, "C-c")
+    time.sleep(0.2)
+    _type_until(control_backend, pid, "echo AFTER_FLOOD", "AFTER_FLOOD")
+
+
+def test_tui_logging_goes_to_file(tmp_path, monkeypatch, capsys):
+    """TUI 接管终端后 warning 落盘，不许写到 stderr（会画在光标处）。"""
+    import logging
+
+    from myrtui import cli
+
+    monkeypatch.setattr(
+        cli.platformdirs, "user_log_dir", lambda *a, **k: str(tmp_path)
+    )
+    root = logging.getLogger()
+    before = list(root.handlers)
+    level = root.level
+    try:
+        path = cli.redirect_logging_to_file()
+        assert path == str(tmp_path / "myrtui.log")
+        root.setLevel(logging.WARNING)
+        logging.getLogger("myrtui.tmux").warning("boom-transport-lost")
+        for handler in root.handlers:
+            handler.flush()
+        assert "boom-transport-lost" in open(path, encoding="utf-8").read()
+        assert "boom-transport-lost" not in capsys.readouterr().err
+    finally:
+        root.setLevel(level)
+        for handler in list(root.handlers):
+            if handler not in before:
+                root.removeHandler(handler)
+                handler.close()
+        for handler in before:
+            root.addHandler(handler)
 
 
 # ---------------------------------------------------------------- 集成：整条前端

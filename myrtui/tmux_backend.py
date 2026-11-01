@@ -305,7 +305,7 @@ class ControlClient:
     """常驻 ``tmux -C attach`` 连接（计划 §2.1）。
 
     - 命令写成一行（``;`` 分隔）送进 stdin；
-    - 独立线程逐行读 stdout，块外行直接丢弃，不逐行解析；
+    - 独立线程逐行读 stdout，块外行直接丢弃，不逐行解析，**闲置时连队列都不进**；
     - 每条命令各产出一个 ``%begin/%end`` 块（实测，不是整串一个块），
       靠 :class:`ControlFramer` 收齐到 END 哨兵才返回；
     - 命令之间用锁串行化：调用方（单 worker + 少量事件循环侧的显式调用）
@@ -326,12 +326,22 @@ class ControlClient:
         self._queue: queue.Queue[str | object] = queue.Queue()
         self._lock = threading.Lock()
         self._closed = threading.Event()
+        # 「有命令在飞」：读线程只在置位时入队，其余时间的 %output 直接丢。
+        # 否则画面一直在动（图像、tail -f）时队列会无限涨，下一条命令得先把
+        # 积压排空才能看到自己的块——这是超时与掉线的放大器。
+        self._busy = threading.Event()
         self.proc = subprocess.Popen(
             [tmux_bin, "-L", socket_name, "-C", "attach", "-t", session_name],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,  # attach 失败的原因走握手错误，不写 stderr
             text=True,
+            # **不能严格解码**：pane 里的二进制 / 图像 / Latin-1 输出会原样
+            # 经过 tmux（它只转义控制字符），一个非法字节就让读线程抛
+            # UnicodeDecodeError 死掉 → 之后每条命令都报 closed、无限重连
+            # （0.6.0.dev1 真机实录：画面一动就满屏闪 warning）。
+            encoding="utf-8",
+            errors="replace",
             bufsize=1,
         )
         self._reader = threading.Thread(
@@ -353,8 +363,10 @@ class ControlClient:
         try:
             assert self.proc.stdout is not None
             for line in self.proc.stdout:
+                if not self._busy.is_set():
+                    continue  # 闲置：%output / 通知直接丢，不占队列
                 self._queue.put(line.rstrip("\r\n"))
-        except Exception:  # 解码失败 / 管道异常：一律按失联处理
+        except Exception:  # 管道异常：按失联处理
             pass
         finally:
             self._queue.put(_EOF)
@@ -383,13 +395,17 @@ class ControlClient:
                 ";", "display-message", "-p", self.end,
             ]
             line = " ".join(_quote_arg(arg) for arg in sequence)
+            self._busy.set()
             try:
-                assert self.proc.stdin is not None
-                self.proc.stdin.write(line + "\n")
-                self.proc.stdin.flush()
-            except (OSError, ValueError):
-                return ControlResult(ok=False, error="control client closed")
-            return self._collect(timeout, raw=raw)
+                try:
+                    assert self.proc.stdin is not None
+                    self.proc.stdin.write(line + "\n")
+                    self.proc.stdin.flush()
+                except (OSError, ValueError):
+                    return ControlResult(ok=False, error="control client closed")
+                return self._collect(timeout, raw=raw)
+            finally:
+                self._busy.clear()
 
     def _collect(self, timeout: float, *, raw: bool = False) -> ControlResult:
         framer = ControlFramer(self.start, self.end)
@@ -519,12 +535,16 @@ class TmuxBackend:
     ) -> subprocess.CompletedProcess:
         # stdin 必须显式隔离：前端跑在真实 PTY 里，若让 tmux client 继承
         # TTY stdin，它会创建 client 并与前端抢读终端输入 → 丢键。
+        # 解码与 control 同口径（utf-8 + replace）：pane 里可能有非 UTF-8 字节，
+        # 严格解码会抛 UnicodeDecodeError，两条路径的行为不该在这里分叉。
         proc = subprocess.run(
             self._base() + args,
             input=stdin,
             stdin=None if stdin is not None else subprocess.DEVNULL,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
         )
         if check and proc.returncode != 0:
