@@ -33,10 +33,12 @@ from myrtui.i18n import LANGUAGES, set_lang, t
 
 from myrtui.tmux_backend import (
     DEFAULT_HISTORY_LIMIT,
+    TRANSPORT_ENV,
     TmuxError,
     TmuxNotFoundError,
     TmuxBackend,
     check_tmux,
+    resolve_transport,
 )
 
 log = logging.getLogger("myrtui")
@@ -462,7 +464,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    backend = TmuxBackend(socket_name, session_name)
+    backend = TmuxBackend(
+        socket_name,
+        session_name,
+        transport=resolve_transport(os.environ.get(TRANSPORT_ENV))[0],
+    )
     try:
         if not backend.has_session():
             cols, rows = shutil.get_terminal_size()
@@ -487,10 +493,16 @@ def main(argv: list[str] | None = None) -> int:
                     "之后新建的 pane（tmux 在创建时快照选项）。",
                     file=sys.stderr,
                 )
+        # 0.6.0：常驻 control 客户端（INPUT-LATENCY §2.3）。必须在建会话 /
+        # 下发选项之后挂——那几步走 exec。auto 模式失败只告警、保持 exec；
+        # control 模式（验收用）失败则报错退出。
+        backend.open_control()
     except TmuxError as exc:
         print(f"myrtui: {exc}", file=sys.stderr)
+        backend.close_control()
         os.close(lock_fd)
         return 1
+    log.info("tmux transport=%s", "control" if backend.control_active else "exec")
 
     # v0.37：位图能力必须在 Textual 接管 stdin **之前**探测（textual-image
     # 要读 DA1 回复）；缺依赖 / 非 tty / 探测异常都只是「无位图」。
@@ -512,7 +524,16 @@ def main(argv: list[str] | None = None) -> int:
     try:
         app.run()
     finally:
+        # 先关常驻客户端（计划 §2.3：退出时不让它活过前端），再放锁。
         # 前端退出（含接管让位）= detach；tmux 会话与 shell 继续存活（§3.1）。
+        backend.close_control()
+        if os.environ.get("MYRTUI_LOOP_DEBUG") == "1":
+            # 与事件循环遥测同口径：直写 stderr，验收时不用配 logging
+            print(
+                f"[myrtui] transport control reconnects={backend.reconnects}",
+                file=sys.stderr,
+                flush=True,
+            )
         # 锁文件不删除（永不 unlink），fd 随进程退出由内核释放。
         os.close(lock_fd)
     return 0

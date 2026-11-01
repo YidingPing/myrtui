@@ -48,6 +48,7 @@ MESSAGES: dict[str, str] = {
     "tmux.not_installed": "tmux 未安装。macOS: `brew install tmux`；Linux: `apt install tmux`。",
     "tmux.too_old": "tmux 版本过低（{version}），需要 >= 3.1（capture-pane -N 为 3.1 新增）。请升级后重试。",
     "tmux.command_failed": "tmux {args}... 失败（exit={code}）: {stderr}",
+    "tmux.control_unavailable": "tmux 控制模式建不起来（{reason}）。用 MYRTUI_TRANSPORT=auto 自动回落 exec。",
     # ---- 分隔线 ------------------------------------------------------------
     "separator.unknown_orientation": "未知方向: {orientation!r}",
     # ---- 实例管理（instances.py）-------------------------------------------

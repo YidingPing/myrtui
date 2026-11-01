@@ -51,6 +51,7 @@ MESSAGES: dict[str, str] = {
     "tmux.not_installed": "tmux is not installed. macOS: `brew install tmux`; Linux: `apt install tmux`.",
     "tmux.too_old": "tmux {version} is too old; 3.1 or newer is required (capture-pane -N arrived in 3.1). Please upgrade.",
     "tmux.command_failed": "tmux {args}... failed (exit={code}): {stderr}",
+    "tmux.control_unavailable": "The tmux control transport could not be started ({reason}). Use MYRTUI_TRANSPORT=auto to fall back to exec.",
     # ---- separators --------------------------------------------------------
     "separator.unknown_orientation": "Unknown orientation: {orientation!r}",
     # ---- instance management (instances.py) --------------------------------

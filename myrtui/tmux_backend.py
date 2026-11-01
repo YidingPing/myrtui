@@ -2,7 +2,11 @@
 
 约定：
 - 所有命令都带 ``-L <socket-name>``，走隔离实例；
-- 前端从不 attach tmux client，每次调用都是秒级生灭的短命 client；
+- 两种传输（0.6.0：``MYRTUI_TRANSPORT``）：``exec`` 每次调用 fork 一个
+  短命 client（老路径），``control`` 常驻一个 ``tmux -C attach`` 连接；
+  ``auto`` 能用 control 就用，失败回落 exec——命令构造与解析两条路径共用；
+- 前端从不 attach **交互式** tmux client：control 客户端只喂单行命令，
+  不读终端、不参与键位，窗口尺寸靠 ``resize-window``（实测 attach 不改尺寸）；
 - 多 pane 时用 ``;`` 串联，单次进程调用抓完全部（N14）；
 - capture 永不追加 ``-a``（M2），永不启用 ``-J``（M11）；
 - 翻页公式 ``-S -K -E $((H-1-K))``（M1），K 先 clamp 到 ``history_size-1``（M12），
@@ -12,9 +16,12 @@ from __future__ import annotations
 
 import logging
 import os
+import queue
 import re
 import socket
 import subprocess
+import threading
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -111,11 +118,343 @@ def check_tmux(tmux_bin: str = "tmux") -> tuple[int, int] | None:
     return version
 
 
+# ── 传输选择与常驻客户端（0.6.0-INPUT-LATENCY-PLAN §2） ──────────────
+#
+# 每个按键/每次抓屏都要付一次 ``tmux`` client 启动（实测 4.5–5 ms，真 app
+# 里被 GIL 竞争放大到 8–16 ms）；控制通道的往返是 0.06–0.3 ms。所以：
+# control 只替换 ``_run`` 的传输层，命令、解析、``check=False`` 语义两条路径
+# 完全一致；``exec`` 永远保留为逃生口与对照。
+
+TRANSPORT_ENV = "MYRTUI_TRANSPORT"
+TRANSPORT_AUTO = "auto"
+TRANSPORT_EXEC = "exec"
+TRANSPORT_CONTROL = "control"
+TRANSPORTS = (TRANSPORT_AUTO, TRANSPORT_EXEC, TRANSPORT_CONTROL)
+
+# 0.6.0 起默认 auto（计划 §2.4）：能用 control 就用，建不起来回落 exec。
+DEFAULT_TRANSPORT = TRANSPORT_AUTO
+
+CONTROL_TIMEOUT = 10.0  # 单条命令超时；超时按「客户端失联」处理（计划 §2.1）
+CONTROL_READY_TIMEOUT = 3.0  # 建连接 + 握手
+RECONNECT_BACKOFF = (1.0, 2.0, 5.0)  # 运行时失联后的重连退避（计划 §2.3）
+
+# 控制模式的块定界行：``%begin <ts> <num> <flags>`` / ``%end ...``。
+# **内容行也可能以 ``%`` 开头**（实测 ``display-message -p '%end fake'``
+# 原样输出 ``%end fake``），所以只认「原样重复本块 %begin 三元组」的那一行：
+# 内容要撞车必须先知道当前 epoch + 计数器，实际不可能。
+_BEGIN_RE = re.compile(r"^%begin (\d+) (\d+) (\d+)$")
+
+# 控制模式不能承载的命令（计划 §2.2）：
+# - kill-server：服务器与客户端一起退出，等不到 %end；
+# - start-server / new-session / has-session：发生在客户端建立之前，
+#   或会重建服务器；
+# - load-buffer：协议是行式的，带 stdin 的请求由 ``stdin`` 判据再拦一次。
+_CONTROL_DENY = frozenset(
+    {"kill-server", "has-session", "start-server", "new-session", "load-buffer"}
+)
+
+# 输出是「原始内容」而非「逐行打印」的命令（换行处理不同，见 _collect）。
+# 逐行打印的命令（capture-pane / list-panes / display-message …）每行一次
+# print，块行数 = 打印行数；show-buffer 是整段内容一次 print，内容里的 \n
+# 直接变成块行，**包括末尾那个空行**。两条路径要逐字节一致，必须分开处理。
+_RAW_OUTPUT = frozenset({"show-buffer"})
+
+
+class _Arg(str):
+    """「这是实参，不是命令分隔符」的标记（只对值恰为 ``;`` 的实参有意义）。
+
+    tmux 的命令分隔符是 ``;``（不加引号），而 pane 里打一个 ``;`` 太常见：
+    控制模式下必须序列化成引号化的 ``";"``（实测 tmux 按字面处理、不拆分）。
+    """
+
+
+def _is_separator(arg: str) -> bool:
+    return arg == ";" and not isinstance(arg, _Arg)
+
+
+def _quote_arg(arg: str) -> str:
+    """单行协议的参数引号：双引号 + 反斜杠转义（计划 §2.1）。
+
+    ``;`` 是命令分隔符，**不加引号**；值就是 ``;`` 的实参用 :class:`_Arg`
+    标记后按普通参数引号化。
+
+    ``$`` 必须转义：控制模式是**行协议**，tmux 解析命令行时会把
+    ``"$HOME"`` 展开成环境变量（实测 ``display-message -p "$HOME"`` →
+    ``/Users/…``），而 exec 模式的 argv 不做这种展开。不转义的话，往 pane
+    里打一句 ``echo $HOME`` 会被提前展开成别的命令（真机必现）。
+    """
+    if _is_separator(arg):
+        return ";"
+    if arg == "":
+        return '""'
+    escaped = arg.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$")
+    return '"' + escaped + '"'
+
+
+def _command_names(args: list[str]) -> list[str]:
+    """按 ``;`` 拆出序列里每条命令的名字（走不走 control 的判据）。"""
+    names: list[str] = []
+    expect = True
+    for arg in args:
+        if _is_separator(arg):
+            expect = True
+            continue
+        if expect:
+            names.append(arg)
+            expect = False
+    return names
+
+
+def resolve_transport(raw: str | None) -> tuple[str, str | None]:
+    """解析 ``MYRTUI_TRANSPORT`` → ``(mode, warning)``。
+
+    未设 / 空串 = ``auto``；非法值告警后回落 ``auto``（与
+    ``MYRTUI_IDLE_INTERVAL`` / ``MYRTUI_MATH_BACKEND`` 同口径）。
+    """
+    if raw is None or not raw.strip():
+        return DEFAULT_TRANSPORT, None
+    mode = raw.strip().lower()
+    if mode in TRANSPORTS:
+        return mode, None
+    warning = (
+        f"{TRANSPORT_ENV}={raw!r} is not one of {'/'.join(TRANSPORTS)}; "
+        f"falling back to {DEFAULT_TRANSPORT}"
+    )
+    log.warning(warning)
+    return DEFAULT_TRANSPORT, warning
+
+
+class ControlFramer:
+    """把控制模式的行流切成「两条哨兵之间的命令输出」（计划 §2.1）。
+
+    tmux 保证通知（``%output`` 等）不会落进输出块内，但**块内的内容行**
+    可以以 ``%`` 开头。所以：
+
+    - 块外：只认 ``%begin <ts> <num> <flags>``，其余行（通知、本次之前的
+      残留）直接丢弃；
+    - 块内：只把「原样重复本块三元组」的 ``%end`` / ``%error`` 当定界行，
+      其余一律是内容——内容要撞车得先知道 epoch 与计数器，实际不会发生；
+    - 序列自己插入的 ``START`` / ``END`` 哨兵各占一个块，只收集两条哨兵
+      之间的输出，避免把 ``%`` 前缀内容误判成通知。
+    """
+
+    def __init__(self, start: str, end: str) -> None:
+        self.start = start
+        self.end = end
+        self.lines: list[str] = []
+        self.error: str | None = None
+        self.done = False
+        self._triple: str | None = None
+        self._block: list[str] = []
+        self._started = False
+
+    def feed(self, line: str) -> bool:
+        """喂一行，返回是否已收齐（``done``）。"""
+        if self.done:
+            return True
+        if self._triple is None:
+            m = _BEGIN_RE.match(line)
+            if m is not None:
+                self._triple = f"{m.group(1)} {m.group(2)} {m.group(3)}"
+                self._block = []
+            return False
+        if line == f"%end {self._triple}":
+            self._triple = None
+            block, self._block = self._block, []
+            self._consume(block)
+        elif line == f"%error {self._triple}":
+            self._triple = None
+            self.error = "\n".join(self._block) or "tmux error"
+            self._block = []
+            self.done = True
+        else:
+            self._block.append(line)
+        return self.done
+
+    def _consume(self, block: list[str]) -> None:
+        if not self._started:
+            if block == [self.start]:
+                self._started = True
+            return
+        if block == [self.end]:
+            self.done = True
+            return
+        self.lines.extend(block)
+
+
+@dataclass(frozen=True)
+class ControlResult:
+    """一次 control 往返的结果。
+
+    ``ok``：命令执行完毕（``stdout`` 是块内容，可能为空串）；
+    ``command_failed``：tmux 回了 ``%error``——命令本身的错，传输还活着，
+    按 exec 的失败口径返回（returncode=1 + stderr）；
+    两者都不成立：传输故障（超时 / 管道关闭），调用方关客户端并降级 exec。
+    """
+
+    ok: bool
+    stdout: str = ""
+    error: str = ""
+    command_failed: bool = False
+
+
+_EOF = object()  # 读线程结束（客户端退出 / 管道关闭）
+
+
+class ControlClient:
+    """常驻 ``tmux -C attach`` 连接（计划 §2.1）。
+
+    - 命令写成一行（``;`` 分隔）送进 stdin；
+    - 独立线程逐行读 stdout，块外行直接丢弃，不逐行解析；
+    - 每条命令各产出一个 ``%begin/%end`` 块（实测，不是整串一个块），
+      靠 :class:`ControlFramer` 收齐到 END 哨兵才返回；
+    - 命令之间用锁串行化：调用方（单 worker + 少量事件循环侧的显式调用）
+      本来就要求「提交顺序 = 执行顺序」。
+    """
+
+    def __init__(
+        self,
+        tmux_bin: str,
+        socket_name: str,
+        session_name: str,
+        *,
+        timeout: float = CONTROL_READY_TIMEOUT,
+    ) -> None:
+        token = uuid.uuid4().hex
+        self.start = f"__MYRTUI_CTL_{token}_S__"
+        self.end = f"__MYRTUI_CTL_{token}_E__"
+        self._queue: queue.Queue[str | object] = queue.Queue()
+        self._lock = threading.Lock()
+        self._closed = threading.Event()
+        self.proc = subprocess.Popen(
+            [tmux_bin, "-L", socket_name, "-C", "attach", "-t", session_name],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,  # attach 失败的原因走握手错误，不写 stderr
+            text=True,
+            bufsize=1,
+        )
+        self._reader = threading.Thread(
+            target=self._read_loop, name="myrtui-tmux-control", daemon=True
+        )
+        self._reader.start()
+        # 握手：attach 失败（无会话 / 非 tty / tmux 太老）时进程直接退出，
+        # 靠一条命令确认连接可用；失败即「这个环境用不了 control」。
+        result = self.run(
+            ["display-message", "-p", "myrtui-control-ready"], timeout=timeout
+        )
+        if not result.ok:
+            self.close()
+            raise TmuxError(t("tmux.control_unavailable", reason=result.error))
+
+    # ---------- 读线程 ----------
+
+    def _read_loop(self) -> None:
+        try:
+            assert self.proc.stdout is not None
+            for line in self.proc.stdout:
+                self._queue.put(line.rstrip("\r\n"))
+        except Exception:  # 解码失败 / 管道异常：一律按失联处理
+            pass
+        finally:
+            self._queue.put(_EOF)
+
+    def _next(self, timeout: float) -> str | object | None:
+        try:
+            return self._queue.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+    # ---------- 命令 ----------
+
+    def run(
+        self,
+        args: list[str],
+        timeout: float = CONTROL_TIMEOUT,
+        *,
+        raw: bool = False,
+    ) -> ControlResult:
+        with self._lock:
+            if self._closed.is_set() or self.proc.poll() is not None:
+                return ControlResult(ok=False, error="control client closed")
+            sequence = [
+                "display-message", "-p", self.start, ";",
+                *args,
+                ";", "display-message", "-p", self.end,
+            ]
+            line = " ".join(_quote_arg(arg) for arg in sequence)
+            try:
+                assert self.proc.stdin is not None
+                self.proc.stdin.write(line + "\n")
+                self.proc.stdin.flush()
+            except (OSError, ValueError):
+                return ControlResult(ok=False, error="control client closed")
+            return self._collect(timeout, raw=raw)
+
+    def _collect(self, timeout: float, *, raw: bool = False) -> ControlResult:
+        framer = ControlFramer(self.start, self.end)
+        deadline = time.monotonic() + timeout
+        while not framer.done:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return ControlResult(ok=False, error="timeout")
+            line = self._next(left)
+            if line is _EOF:
+                return ControlResult(ok=False, error="control client closed")
+            if line is None:
+                return ControlResult(ok=False, error="timeout")
+            framer.feed(line)
+        if framer.error is not None:
+            return ControlResult(ok=False, error=framer.error, command_failed=True)
+        text = "\n".join(framer.lines)
+        if raw:
+            # 原始内容：块行已经是内容的精确切分（含末尾空行 → 末尾换行）
+            return ControlResult(ok=True, stdout=text)
+        # 逐行打印：exec 路径的每一行都以 \n 结尾。空块（命令无输出）→ ""；
+        # 只含一个空行的块 → "\n"，两者不能混（M18 口径）。
+        return ControlResult(ok=True, stdout=text + "\n" if framer.lines else "")
+
+    def close(self) -> None:
+        """幂等关闭：先置位（让在途 run 尽快返回），再杀进程。
+
+        **不拿命令锁**：run() 可能正卡在 10 s 的读等待里，退出路径不能被它拖住。
+        """
+        self._closed.set()
+        try:
+            if self.proc.stdin is not None:
+                self.proc.stdin.close()
+        except OSError:
+            pass
+        try:
+            self.proc.terminate()
+            self.proc.wait(timeout=1.0)
+        except (OSError, subprocess.TimeoutExpired):
+            try:
+                self.proc.kill()
+            except OSError:
+                pass
+
+
 class TmuxBackend:
-    def __init__(self, socket_name: str, session_name: str, tmux_bin: str = "tmux"):
+    def __init__(
+        self,
+        socket_name: str,
+        session_name: str,
+        tmux_bin: str = "tmux",
+        *,
+        transport: str = TRANSPORT_EXEC,
+    ):
         self.socket = socket_name
         self.session = session_name
         self.tmux = tmux_bin
+        # 传输模式只由调用方（cli）按 MYRTUI_TRANSPORT 解析后传入；默认 exec
+        # 让「不关心传输」的路径（instances / 单测）永远走老路，零行为变化。
+        self.transport = transport
+        self._control: ControlClient | None = None
+        self._control_lock = threading.Lock()
+        self._control_closed = threading.Event()
+        self._reconnect_thread: threading.Thread | None = None
+        self.reconnects = 0  # 诊断计数（MYRTUI_LOOP_DEBUG=1 时由 cli 记录）
 
     # ---------- 基础 ----------
 
@@ -123,6 +462,54 @@ class TmuxBackend:
         return [self.tmux, "-L", self.socket]
 
     def _run(
+        self,
+        args: list[str],
+        *,
+        stdin: str | None = None,
+        check: bool = True,
+        timeout: float = 10.0,
+    ) -> subprocess.CompletedProcess:
+        """命令执行入口：能走 control 就走，否则走 exec（计划 §2.2）。
+
+        两条路径的返回值语义必须一致：stdout 逐字节相同、``check=False``
+        时 returncode=1 + stderr。control 的**命令错**（``%error``）按同样
+        口径返回；control 的**传输故障**（超时 / 管道关闭）关掉客户端、
+        本条命令改走 exec，并后台重连——不新增用户可见状态。
+        """
+        client = self._control
+        if client is not None and self._control_eligible(args, stdin):
+            raw = any(name in _RAW_OUTPUT for name in _command_names(args))
+            result = client.run(args, timeout, raw=raw)
+            if result.ok:
+                return subprocess.CompletedProcess(
+                    args=args, returncode=0, stdout=result.stdout, stderr=""
+                )
+            if result.command_failed:
+                if check:
+                    raise TmuxError(
+                        t(
+                            "tmux.command_failed",
+                            args=" ".join(args[:3]),
+                            code=1,
+                            stderr=result.error,
+                        )
+                    )
+                return subprocess.CompletedProcess(
+                    args=args, returncode=1, stdout="", stderr=result.error + "\n"
+                )
+            self._drop_control(result.error, client)
+        return self._run_exec(args, stdin=stdin, check=check, timeout=timeout)
+
+    @staticmethod
+    def _control_eligible(args: list[str], stdin: str | None) -> bool:
+        """这条命令能不能走 control（计划 §2.2 的排除表）。"""
+        if stdin is not None:
+            return False  # load-buffer / paste：行协议载不了 stdin
+        if any("\n" in arg or "\r" in arg for arg in args):
+            return False  # 行协议边界：换行参数直接降级 exec
+        return not any(name in _CONTROL_DENY for name in _command_names(args))
+
+    def _run_exec(
         self,
         args: list[str],
         *,
@@ -150,6 +537,118 @@ class TmuxBackend:
                 )
             )
         return proc
+
+    # ---------- 传输：常驻客户端（计划 §2.3） ----------
+
+    @property
+    def control_active(self) -> bool:
+        return self._control is not None
+
+    def open_control(self) -> bool:
+        """挂常驻客户端；返回是否真的用上了 control。
+
+        - ``exec`` 模式：no-op（逃生口 / 本地 A/B 的开关）；
+        - ``auto``：attach 失败（无会话 / 非 tty / tmux 太老）记一条 warning，
+          保持 exec，不新增用户可见状态；
+        - ``control``：建不起来就抛 :class:`TmuxError`（验收模式，不静默降级）。
+
+        调用时机：``create_session`` / ``apply_session_options`` 之后——那几步
+        必须在客户端建立之前、走 exec 执行（计划 §2.2）。
+        """
+        if self.transport == TRANSPORT_EXEC or self._control is not None:
+            return self._control is not None
+        self._control_closed.clear()
+        try:
+            client = ControlClient(self.tmux, self.socket, self.session)
+        except TmuxError as exc:
+            if self.transport == TRANSPORT_CONTROL:
+                raise
+            log.warning("control transport unavailable (%s); staying on exec", exc)
+            return False
+        except OSError as exc:  # tmux 不在 PATH / fd 耗尽之类
+            if self.transport == TRANSPORT_CONTROL:
+                raise TmuxError(
+                    t("tmux.control_unavailable", reason=exc)
+                ) from None
+            log.warning("control transport unavailable (%s); staying on exec", exc)
+            return False
+        with self._control_lock:
+            if self._control is not None:
+                client.close()  # 重连线程抢先装上了：保留它
+                return True
+            self._control = client
+        log.info("tmux transport=control")
+        return True
+
+    def close_control(self) -> None:
+        """关常驻客户端并停掉重连（退出路径第一步，计划 §2.3）。"""
+        self._control_closed.set()
+        with self._control_lock:
+            client, self._control = self._control, None
+        if client is not None:
+            client.close()
+            log.debug("control 客户端已关闭")
+        thread = self._reconnect_thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=1.0)
+
+    def _drop_control(
+        self, reason: str, client: ControlClient | None = None
+    ) -> None:
+        """传输故障：关客户端、本条命令降级 exec、后台按退避重连。
+
+        ``client`` 给定时只关「确实失败的那个」——并发的重连线程可能已经装上了
+        新客户端，这里不能把它一起关掉。
+        """
+        with self._control_lock:
+            stale = self._control
+            if client is not None and stale is not client:
+                return
+            self._control = None
+        if stale is not None:
+            stale.close()
+        log.warning("control transport lost (%s); this command used exec", reason)
+        self._start_reconnect()
+
+    def _start_reconnect(self) -> None:
+        if self._control_closed.is_set():
+            return
+        thread = self._reconnect_thread
+        if thread is not None and thread.is_alive():
+            return
+        self._reconnect_thread = threading.Thread(
+            target=self._reconnect_loop, name="myrtui-tmux-reconnect", daemon=True
+        )
+        self._reconnect_thread.start()
+
+    def _reconnect_loop(self) -> None:
+        """按 1 s / 2 s / 5 s 退避重连，最多 3 次（计划 §2.3）。
+
+        会话被外部 kill 后同名重建（P2 已覆盖的路径）也走这里：重新
+        ``attach -t <session>`` 即可，会话名不变。
+        """
+        for attempt, delay in enumerate(RECONNECT_BACKOFF, start=1):
+            if self._control_closed.wait(delay):
+                return
+            if self._control is not None:
+                return
+            try:
+                client = ControlClient(self.tmux, self.socket, self.session)
+            except (TmuxError, OSError) as exc:
+                log.debug("control 重连第 %d 次失败：%s", attempt, exc)
+                continue
+            with self._control_lock:
+                if self._control_closed.is_set() or self._control is not None:
+                    client.close()  # 被别的线程抢先恢复 / 已经在退出
+                    return
+                self._control = client
+                self.reconnects += 1
+            log.info("tmux transport=control (reconnected, attempt %d)", attempt)
+            return
+        log.warning(
+            "control transport could not reconnect after %d attempts; staying on exec",
+            len(RECONNECT_BACKOFF),
+        )
 
     # ---------- 生命周期 ----------
 
@@ -304,6 +803,9 @@ class TmuxBackend:
         return proc.stdout
 
     def kill_server(self) -> None:
+        # 控制客户端会随服务器一起退出，等不到 %end（计划 §2.2）→ 先关客户端
+        # 再走 exec；否则 kill-server 命令本身会挂在读等待上。
+        self.close_control()
         self._run(["kill-server"], check=False)
 
     def new_window(self, root: str) -> str:
@@ -462,9 +964,13 @@ class TmuxBackend:
             self._run(["send-keys", "-t", pane_id, *keys])
 
     def send_text(self, pane_id: str, text: str) -> None:
-        """字串注入（literal UTF-8），不溢出 ARG_MAX（N17 口径）。"""
+        """字串注入（literal UTF-8），不溢出 ARG_MAX（N17 口径）。
+
+        文字用 :class:`_Arg` 标记：单个 ``;`` 是合法的键入内容，不能被控制
+        模式当成命令分隔符拆开（否则打一个分号就丢半条命令）。
+        """
         if text:
-            self._run(["send-keys", "-l", "-t", pane_id, "--", text])
+            self._run(["send-keys", "-l", "-t", pane_id, "--", _Arg(text)])
 
     def run_command(self, pane_id: str, command: str) -> None:
         """把一条 shell 命令送进 pane 并回车（v0.28 查看 / 渲染，v0.31 打开）。
@@ -481,7 +987,7 @@ class TmuxBackend:
         self._run(
             [
                 "send-keys", "-t", pane_id, "C-u", ";",
-                "send-keys", "-l", "-t", pane_id, "--", command, ";",
+                "send-keys", "-l", "-t", pane_id, "--", _Arg(command), ";",
                 "send-keys", "-t", pane_id, "Enter",
             ]
         )
