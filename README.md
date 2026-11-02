@@ -33,7 +33,8 @@ where you left it.
   realpath, so two projects never collide; running `myrtui` again attaches to
   the same session with your panes, layout and scrollback intact.
 - **Up to 4 real tmux panes** with mouse support: click to focus, wheel to
-  scroll, drag splitters to resize (ratios persisted per project).
+  scroll, left-drag splitters to resize (ratios persisted per project),
+  right-click to paste in panes whose program did not ask for the mouse.
 - **File tree with git status colours** (VS Code conventions), lazy-loaded,
   context menu for open / preview / copy path.
 - **Git history panel** — repo-wide or per file, hover a commit for details.

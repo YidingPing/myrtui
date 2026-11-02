@@ -15,6 +15,7 @@ import asyncio
 
 import pytest
 
+from myrtui.client import clipboard
 from myrtui.client.app import TerminalApp, OUTER_MUX_HINT_SECONDS
 from myrtui.client.topbar import TopBar
 from myrtui.i18n import t
@@ -53,8 +54,11 @@ def test_outer_multiplexer(env, expected):
 
 
 class _FakeBackend:
-    def __init__(self, count: int = 1):
+    def __init__(self, count: int = 1, mouse: tuple[bool, bool, bool, bool] = (False, False, False, False)):
         self.count = count
+        self.mouse = mouse
+        self.pasted: list[tuple[str, str]] = []
+        self.sent: list[tuple] = []
 
     def list_panes(self):
         return [
@@ -71,11 +75,11 @@ class _FakeBackend:
                 width=80,
                 window_id=f"w{i}",
                 window_index=i,
-                mouse_standard=False,
-                mouse_button=False,
-                mouse_any=False,
+                mouse_standard=self.mouse[0],
+                mouse_button=self.mouse[1],
+                mouse_any=self.mouse[2],
                 mouse_sgr=True,
-                mouse_all=False,
+                mouse_all=self.mouse[3],
             )
             for i in range(self.count)
         ]
@@ -98,11 +102,11 @@ class _FakeBackend:
     def send_ctrl_a(self, pane_id):
         pass
 
-    def send_mouse(self, pane_id, sequence):
-        pass
-
     def paste(self, pane_id, text):
-        pass
+        self.pasted.append((pane_id, text))
+
+    def send_mouse(self, pane_id, sequence):
+        self.sent.append(("mouse", pane_id, sequence))
 
     def take_clipboard_events(self):
         return []
@@ -179,5 +183,91 @@ def test_hint_expires_and_shares_the_status_entry(monkeypatch, app_root):
             app._refresh_status()
             await pilot.pause(0.1)
             assert app.query_one(TopBar)._status != t("app.outer_mux_hint")
+
+    asyncio.run(scenario())
+
+
+# ---------------------------------------------------------------- 右键粘贴
+
+
+MOUSE_1003 = (False, False, True, True)
+
+
+def test_right_click_pastes_when_program_has_no_mouse(monkeypatch, app_root):
+    """0.8.0：程序没请求鼠标时，右键 = 粘贴（终端约定，填「右键没反应」的洞）。"""
+
+    monkeypatch.setattr(clipboard, "read_system_clipboard", lambda: "client-side-text")
+
+    async def scenario():
+        backend = _FakeBackend(1)
+        app = TerminalApp(backend, app_root)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.3)
+            await pilot.mouse_down("#pane-0", offset=(3, 2), button=3)
+            await pilot.pause(0.4)
+            await pilot.mouse_up("#pane-0", offset=(3, 2))
+            await pilot.pause(0.2)
+            assert backend.pasted == [("p0", "client-side-text")]
+            assert not [item for item in backend.sent if item[0] == "mouse"]
+
+    asyncio.run(scenario())
+
+
+def test_right_click_forwards_when_program_has_mouse(monkeypatch, app_root):
+    """程序请求了鼠标（vim / opencode）→ 右键归它，不能抢成粘贴。"""
+
+    monkeypatch.setattr(
+        clipboard,
+        "read_system_clipboard",
+        lambda: pytest.fail("程序要鼠标时不得读剪贴板"),
+    )
+
+    async def scenario():
+        backend = _FakeBackend(1, mouse=MOUSE_1003)
+        app = TerminalApp(backend, app_root)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.3)
+            await pilot.mouse_down("#pane-0", offset=(3, 2), button=3)
+            await pilot.pause(0.2)
+            await pilot.mouse_up("#pane-0", offset=(3, 2))
+            await pilot.pause(0.2)
+            assert backend.pasted == []
+            assert [item for item in backend.sent if item[0] == "mouse"]
+
+    asyncio.run(scenario())
+
+
+def test_right_click_paste_falls_back_to_internal_buffer(monkeypatch, app_root):
+    """系统剪贴板读不到 → 用内部缓冲（与 Ctrl-a v 同一条链）。"""
+
+    monkeypatch.setattr(clipboard, "read_system_clipboard", lambda: None)
+
+    async def scenario():
+        backend = _FakeBackend(1)
+        app = TerminalApp(backend, app_root)
+        app._copy_buffer = "internal-old"
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.3)
+            await pilot.mouse_down("#pane-0", offset=(3, 2), button=3)
+            await pilot.pause(0.4)
+            assert backend.pasted == [("p0", "internal-old")]
+
+    asyncio.run(scenario())
+
+
+def test_right_click_paste_respects_osc52_only_mode(monkeypatch, app_root):
+    """``MYRTUI_CLIPBOARD=osc52``：没有可读的剪贴板 → 只提示终端粘贴键。"""
+
+    monkeypatch.setenv("MYRTUI_CLIPBOARD", "osc52")
+
+    async def scenario():
+        backend = _FakeBackend(1)
+        app = TerminalApp(backend, app_root)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.3)
+            await pilot.mouse_down("#pane-0", offset=(3, 2), button=3)
+            await pilot.pause(0.3)
+            assert backend.pasted == []
+            assert "Cmd+V" in app._notice_text
 
     asyncio.run(scenario())

@@ -48,6 +48,11 @@ class _FakeBackend:
     def __init__(self, count: int = 2):
         self.count = count
         self.resized: list[tuple[str, int, int]] = []
+        self.pasted: list[tuple[str, str]] = []
+
+    def paste(self, pane_id, text):
+        # 0.8.0 起右键在没请求鼠标的 pane 上是粘贴，布局用例也可能踩到
+        self.pasted.append((pane_id, text))
 
     def list_panes(self):
         return [_pane(i) for i in range(self.count)]
@@ -322,55 +327,41 @@ def test_grab_zone_keeps_focus_on_pressed_pane(app_root):
     asyncio.run(scenario())
 
 
-def test_drag_button_left_and_right(app_root):
-    """v0.11.5：拖拽认**左键与右键**，中键不参与；双击复位两键皆可。
+def test_drag_button_left_only(app_root):
+    """0.8.0：只有左键能拖分隔线；右键留给 pane（终端约定：右键 = 粘贴）。
 
-    历史口径：v0.11.3 曾收口为只认左键（右键拖拽「不符合直觉」），但用户
-    真机定位出特殊环境——UU 远程等嵌入 tmux 的终端里**左键事件不可达**而
-    右键可达 → 恢复双键拖拽（用户拍板：热区内右键不透传内层程序可接受）。
+    历史：v0.11.5 曾恢复「左 + 右」双键，因为 UU 远程里左键拖不动；0.8.0 定位到
+    真因是外层 tmux 的 ``MouseDrag1Pane`` 覆盖（见 ``client/separators.py``），
+    修好后左键即恢复。右键拖拽的代价是热区内右键不再透传，而 0.8.0 起右键在
+    pane 上是粘贴——两者直接冲突，故收回单键。
     """
     async def scenario():
         backend = _FakeBackend(2)
         app = TerminalApp(backend, app_root)
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.4)
-            # ① 中键按在线本体 → 不启动拖拽
-            await pilot.mouse_down("#sep-main", offset=(0, 8), button=2)
-            await pilot.pause(0.2)
-            assert app._drag_sep is None, "中键不得启动拖拽"
-            await pilot.mouse_up("#sep-main", offset=(0, 8))
-            await pilot.pause(0.2)
-            # ② 右键按在线本体 → 启动拖拽（UU 远程场景的救命键）
-            await pilot.mouse_down("#sep-main", offset=(0, 8), button=3)
-            await pilot.pause(0.2)
-            assert app._drag_sep is not None, "右键应启动拖拽"
-            await pilot.mouse_up("#sep-main", offset=(0, 8))
-            await pilot.pause(0.2)
-            # ③ 右键按 pane 内热区（±1）→ 同样启动 + 切焦点
-            app._set_active(1)
-            await pilot.pause(0.2)
+            # ① 中键 / 右键按在线本体 → 都不启动拖拽
+            for button in (2, 3):
+                await pilot.mouse_down("#sep-main", offset=(0, 8), button=button)
+                await pilot.pause(0.2)
+                assert app._drag_sep is None, f"button={button} 不得启动拖拽"
+                await pilot.mouse_up("#sep-main", offset=(0, 8))
+                await pilot.pause(0.2)
+            # ② 右键按 pane 内热区（±1）→ 同样不启动（0.8.0）
             sep = app.query_one("#sep-main", Separator)
             pane0 = app.query_one("#pane-0")
             offset = (sep.region.x + 1 - pane0.region.x, 8)
             await pilot.mouse_down("#pane-0", offset=offset, button=3)
             await pilot.pause(0.2)
-            assert app._drag_sep is not None, "pane 内热区的右键也应启动拖拽"
-            assert app._active_index == 0, "热区按下的焦点切换与按钮无关"
+            assert app._drag_sep is None, "pane 内热区的右键不得启动拖拽"
             await pilot.mouse_up("#pane-0", offset=offset)
             await pilot.pause(0.2)
-            # ④ 左键在线本体 → 语义不变
+            # ③ 左键语义不变（线本体 + 双击复位）
             await pilot.mouse_down("#sep-main", offset=(0, 8), button=1)
             await pilot.pause(0.2)
             assert app._drag_sep is not None
             await pilot.mouse_up("#sep-main", offset=(0, 8))
             await pilot.pause(0.2)
-            # ⑤ 左/右双击复位（两键皆可）
-            app._ratios["sidebar"] = 0.4
-            app._apply_ratios()
-            await pilot.pause(0.2)
-            await pilot.click("#sep-main", offset=(0, 8), button=3, times=2)
-            await pilot.pause(0.3)
-            assert app._ratios["sidebar"] == layout_state.DEFAULT_RATIOS["sidebar"]
             app._ratios["sidebar"] = 0.4
             app._apply_ratios()
             await pilot.pause(0.2)
@@ -405,7 +396,7 @@ def test_drag_via_real_app_pipeline(app_root):
                     screen_x=float(x), screen_y=float(yy),
                 ))
 
-            for button in (1, 3):  # v0.11.5：左/右键整链等价
+            for button in (1,):  # 0.8.0：收回左键单键（右键在 pane 上是粘贴）
                 before = app._ratios["sidebar"]
                 x0 = app.query_one("#sep-main", Separator).region.x
                 # ① pane 内热区按下 → 切焦点 + 起拖

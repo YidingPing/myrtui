@@ -233,6 +233,10 @@ opencode）时，拖动**转给程序**：它自己的选区 UI 能用，它复�
 - **`MYRTUI_CLIPBOARD=osc52`**：没有可读的剪贴板 → 只提示用终端自己的粘贴快捷键
   （macOS `Cmd+V` / Windows Terminal `Ctrl+V` / Tabby `Ctrl+Shift+V`；拿不到
   `TERM_PROGRAM` 时并列提示），不读系统剪贴板、也不粘内部旧值；
+- **右键粘贴（0.8.0）**：pane 里的程序**没**请求鼠标时（普通 shell、跑着构建
+  的 pane），右键 = 粘贴——与 `Ctrl-a v` 同一条链（系统剪贴板 → 内部缓冲）。
+  这是终端约定，也填了「鼠标上报打开后右键没反应」的洞；请求了鼠标的程序
+  （vim / opencode）仍拿右键（它们自己的菜单/粘贴不能被抢）。
 - 终端原生粘贴（`Cmd+V` / `Ctrl+V` / `Ctrl+Shift+V`，取决于外层终端）始终
   可用，走同一条 tmux `paste-buffer` 通道（程序请求了 bracketed paste 才会包
   bracket）。
@@ -529,8 +533,9 @@ export MYRTUI_EDITOR=nvim    # 或 export EDITOR=hx
 
 - 打开复用**当前 pane**：想同时看两个文件，先 `Ctrl-a t` 开新 pane，
   或退出当前编辑器再开下一个；预览不受此限（它是应用内全屏层）；
-- `ov` 抢鼠标期间左键拖拽仍归 myrtui（v0.35 默认 `always`）：想用 `ov` 自己的
-  拖选 / 双击选词请设 `MYRTUI_DRAG_SELECT=app`；`less` 不抢鼠标，但滚轮不驱动它，
+- `ov` 抢鼠标（`mouse` 打开）时，拖动默认归它自己（0.7.0 起 `MYRTUI_DRAG_SELECT=smart`）
+  → 用 `ov` 的拖选 / 双击选词开箱即用；想用 myrtui 的选字按住 **Shift** 再拖
+  （`always` 则相反：拖动永远归 myrtui）；`less` 不抢鼠标，但滚轮不驱动它，
   请用键盘滚动；
 - 二进制文件（前 8 KiB 含 NUL）不打开；路径含换行 / 控制字符时拒绝执行；
 - 没有 `termtex` 时公式是 LaTeX 原文；
@@ -556,12 +561,14 @@ export MYRTUI_EDITOR=nvim    # 或 export EDITOR=hx
   指针靠近时那条线会提亮，告诉你「这儿能拖」。注意**侧栏 ↔ pane 区那条
   竖线只能从 pane 一侧拖**——侧栏的 padding 让文件树最后一格距线 2 格，
   树侧不在 ±1 热区内。
-- **拖拽可用左键或右键**（v0.11.5）：两个按钮都能拖拽与双击复位（嵌套
-  tmux 的远程终端——如 UU 远程这类——里左键事件可能不可达，右键是
-  救命键）；中键不参与。拖拽在 **App 层**处理（v0.11.4：事件分发前截获，
-  不依赖 widget 层转发与鼠标捕获——SSH 链路等环境下也稳定）。
-  疑难排查：`MYRTUI_MOUSE_DEBUG=1` 启动时把每个鼠标事件写到
-  `<tmp>/myrtui-mouse-debug-<pid>.log`。
+- **拖拽只用左键**（0.8.0 收回单键）：双击复位，中键不参与。v0.11.5 曾恢复
+  「左 + 右」双键——当时把 UU 远程里拖不动归因成「左键事件不可达」；0.8.0 查明
+  真因是**外层 tmux 的 `MouseDrag1Pane` 被改成无条件 copy-mode**，把按住期间的
+  motion 全吃掉了（见「在外层 tmux 里」一节）。绑定恢复后左键即可，而右键留着
+  拖拽会抢走 pane 上的右键（0.8.0 起右键是粘贴），故收回。
+  拖拽在 **App 层**处理（v0.11.4：事件分发前截获，不依赖 widget 层转发与鼠标
+  捕获——SSH 链路等环境下也稳定）。疑难排查：`MYRTUI_MOUSE_DEBUG=1` 启动时把每个
+  鼠标事件写到 `<tmp>/myrtui-mouse-debug-<pid>.log`。
 - **焦点视觉（v0.11.2）**：焦点 pane 的**边框**加粗变绿（`heavy` + 绿色，
   失焦恢复细灰）——边框恒在，切焦点不改变布局尺寸；侧栏聚焦则是**按半区
   变底色**（v0.11.3：焦点在文件树 → 只提亮上半区；焦点在 Git 面板 →
@@ -589,10 +596,12 @@ export MYRTUI_EDITOR=nvim    # 或 export EDITOR=hx
   （`ESC[?1003h`/`ESC[?1006h`），终端进入该模式后就不再自己做拖拽选区，
   鼠标事件全交给 myrtui。部分终端按住 **Shift** 拖拽能临时绕过（取决于终端）；
   myrtui 内的选字请直接**拖拽**（松手自动复制）。
-- **点击延迟 50–150ms**：为了让拖拽永远归选字，左键 press 不立即注入，
-  只有松手且判定为点击时才合成 `press + release`；延迟 = 按住时长。
-- **程序失去左键拖拽**（v0.35 默认）：vim `mouse=a` 的可视拖选、文件管理器 /
-  `ov` 的拖选改为 myrtui 选字；需要时设 `MYRTUI_DRAG_SELECT=app`。
+- **点击延迟 50–150ms**：当拖动归 myrtui（程序没要鼠标，或 `MYRTUI_DRAG_SELECT=always`）
+  时，左键 press 不立即注入，只有松手且判定为点击时才合成 `press + release`；
+  延迟 = 按住时长。请求了鼠标的程序（vim / opencode）按下即收到 press，没有这个延迟。
+- **本地选字要 Shift**（0.7.0 起的默认 `smart`）：vim `mouse=a`、`ov`、opencode 这些
+  会自己处理拖动；想用 myrtui 的选字 + 自动复制，按住 **Shift** 再拖。想让拖动
+  永远归本地就设 `MYRTUI_DRAG_SELECT=always`。
 - **选区按字符偏移保存**：拖拽期间会**冻结**该 pane 的画面（选区不随 capture
   刷新漂移），松手复制后 600ms 解冻并恢复实时内容。
 - **软折行段落会多出换行**：pane 的视觉软折行在 capture 里是独立行，跨行复制

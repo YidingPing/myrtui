@@ -2441,6 +2441,16 @@ class TerminalApp(App, inherit_bindings=False):
         pid = widget.pane_id
         level = self._mouse_levels.get(pid, LEVEL_NONE)
         mode = self._drag_select_mode
+        if int(event.button) == 3 and level == LEVEL_NONE:
+            # 0.8.0：终端约定——程序**没**请求鼠标时，右键就是粘贴。
+            # 它填的是「普通 shell 里右键没反应」这个洞：Textual 开着鼠标上报，
+            # 终端（含 UU 远程）按 xterm 约定不再自己处理右键，只能由我们代劳。
+            # 程序请求了鼠标时仍走下面的转发，右键归它（vim / opencode 自己的
+            # 菜单或粘贴行为不能被抢走）。
+            self._mouse_down_pane = None
+            self._mouse_down_forwarded = False
+            self.action_paste()
+            return
         if int(event.button) != 1:
             use_gesture = False
         elif mode == "always" or level == LEVEL_NONE:

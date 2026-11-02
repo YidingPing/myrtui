@@ -280,8 +280,9 @@ tmux, Sixel needs `set -ga terminal-features ',*:sixel'` (and usually
 ## Splitters
 
 All splitters are one cell thick; press within ±1 cell of the line to grab it
-(the line brightens on hover). Dragging works with either mouse button and a
-double click resets that dimension.
+(the line brightens on hover). Dragging uses the **left button**; a double click
+resets that dimension. If a left drag does nothing at all, an enclosing tmux is
+probably capturing it — see [Inside another tmux](#inside-another-tmux-uu-remote-a-local-mirror).
 
 | Splitter | Position | Adjusts |
 |---|---|---|
@@ -332,6 +333,10 @@ what was copied. `MYRTUI_DRAG_SELECT=always` takes every drag back (v0.35).
   asked for mouse, without a Shift escape hatch. Clicks, wheel and right/middle
   click keep working in all three modes, and myrtui stops its own highlight
   while a drag is forwarded, so you never see two selections at once.
+- **Right-click pastes** on panes whose program did not ask for mouse (a plain
+  shell, a running build): the terminal convention, and the only way to paste
+  there once mouse reporting is on. Programs that did ask for mouse (vim,
+  opencode) keep the right button for themselves.
 - Pasting (`Ctrl-a v`) prefers the system clipboard and falls back to the
   internal buffer. With `MYRTUI_CLIPBOARD=osc52` there is no clipboard to read,
   so myrtui only tells you which terminal shortcut to use (macOS `Cmd+V`,
@@ -407,8 +412,10 @@ change — that does not depend on focus.
   `TERM`, that wins — a documented tmux hazard myrtui does not fight.
 - **Echo waits for the next poll** (~150 ms idle). This is polling latency, not
   a freeze; backend calls themselves are off the event loop.
-- **Clicks in panes are delayed by the press duration** (typically 50–150 ms) so
-  that dragging always belongs to selection.
+- **Clicks in panes are delayed by the press duration** (typically 50–150 ms)
+  when the drag belongs to myrtui (the program did not ask for mouse, or
+  `MYRTUI_DRAG_SELECT=always`); programs that requested mouse get the press
+  immediately.
 - **Soft-wrapped paragraphs gain extra newlines** when copied across the wrap
   (capture is line-based).
 - **The terminal's own selection is unavailable** — Textual enables mouse
