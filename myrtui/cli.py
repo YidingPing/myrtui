@@ -33,11 +33,13 @@ from myrtui.i18n import LANGUAGES, set_lang, t
 
 from myrtui.tmux_backend import (
     DEFAULT_HISTORY_LIMIT,
+    PASSTHROUGH_ENV,
     TRANSPORT_ENV,
     TmuxError,
     TmuxNotFoundError,
     TmuxBackend,
     check_tmux,
+    resolve_passthrough,
     resolve_transport,
 )
 
@@ -531,6 +533,7 @@ def main(argv: list[str] | None = None) -> int:
         socket_name,
         session_name,
         transport=resolve_transport(os.environ.get(TRANSPORT_ENV))[0],
+        clipboard_passthrough=resolve_passthrough(os.environ.get(PASSTHROUGH_ENV)),
     )
     try:
         if not backend.has_session():

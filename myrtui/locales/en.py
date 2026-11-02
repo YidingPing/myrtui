@@ -180,7 +180,7 @@ MESSAGES: dict[str, str] = {
     "page.too_many_pages": "too many pages ({count} > {max})",
 
     # ---- app shell: menus, status bar, notices (app.py) --------------------
-    "app.ssh_paste_hint": "SSH paste: macOS Cmd+V · Windows Terminal Ctrl+V · Tabby Ctrl+Shift+V",
+    "app.paste_hint": "Paste with your terminal: macOS Cmd+V · Windows Terminal Ctrl+V · Tabby Ctrl+Shift+V",
     "app.job.list_panes": "list-panes failed",
     "app.job.backend": "backend call",
     "menu.image_preview": "Preview image",
@@ -223,6 +223,8 @@ MESSAGES: dict[str, str] = {
     "app.nothing_to_copy": "Nothing to copy",
     "app.copied_osc52": "Copied {count} chars via OSC 52",
     "app.copied": "Copied {count} chars",
+    "app.copied_pane": "Copied {count} chars from pane {pane}",
+    "app.copied_failed": "Copy failed: no clipboard channel available",
     "app.copied_osc52_only": "{prefix} (OSC 52 only; no effect if the terminal ignores it)",
     "app.nothing_to_paste": "Nothing to paste",
     "app.pasted": "Pasted {count} chars",

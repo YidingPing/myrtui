@@ -106,12 +106,15 @@ DRAG_THRESHOLD_CELLS = 2  # 指针移动 ≥ 2 格才算拖拽（1 格内容忍�
 THAW_DELAY = 0.6  # 自动复制后高亮保留时长（秒），让用户看清复制了什么
 HOLD_TIMEOUT = 10.0  # MYRTUI_COPY_ON_SELECT=0 时等待 Ctrl-a c 的上限（秒）
 GESTURE_TIMEOUT = 30.0  # 手势安全超时：mouse-up 丢失时不永久冻结（秒）
-# v0.35：SSH 会话的粘贴提示。SSH 只转发 TERM 等少量环境变量，`TERM_PROGRAM`
-# / `WT_SESSION` 通常拿不到 → 无法判断外层客户端，并列给出三种常见按键，
-# 避免像 v0.35 初版那样只写 `Ctrl+Shift+V` 误导 macOS / Windows Terminal 用户。
-def ssh_paste_hint() -> str:
-    """SSH 会话的粘贴按键提示（渲染时求值：模块级 t() 会固化语言）。"""
-    return t("app.ssh_paste_hint")
+# 0.7.0：只配了 OSC 52 通道（`MYRTUI_CLIPBOARD=osc52`）时的粘贴提示。
+# 系统剪贴板读不到 → 只能靠终端自己的粘贴键；`TERM_PROGRAM` / `WT_SESSION`
+# 通常拿不到（SSH 只转发少量环境变量）→ 并列给出三种常见按键，避免像 v0.35
+# 初版那样只写 `Ctrl+Shift+V` 误导 macOS / Windows Terminal 用户。
+def paste_hint() -> str:
+    """终端原生粘贴的按键提示（渲染时求值：模块级 t() 会固化语言）。"""
+    return t("app.paste_hint")
+
+
 MOTION_INTERVAL = 0.03  # v0.7 鼠标 motion 节流：≥30ms 一条（1003 hover 下
 # 每次移动一次 exec 不可承受 → 尾部合并，只保留最新位置）
 GITLOG_INTERVAL = 3.0  # P3：当前目标的 git log 刷新节奏（D7：3s 足够及时，
@@ -238,15 +241,18 @@ def resolve_copy_on_select(raw: str | None) -> bool:
 
 
 def resolve_drag_select(raw: str | None) -> str:
-    """解析 ``MYRTUI_DRAG_SELECT``（v0.35）→ ``"always"`` / ``"app"``。
+    """解析 ``MYRTUI_DRAG_SELECT``（v0.35 / 0.7.0）→ 三档模式。
 
     - 未设 / 空串 / 非法值 → ``"always"``（默认：拖拽永远选字）；
-    - ``app`` → 恢复 v0.34 行为（程序抢鼠标时拖拽转发给程序）。
+    - ``app`` → 恢复 v0.34 行为（程序抢鼠标时拖拽转发给程序）；
+    - ``smart``（0.7.0）→ 真终端约定：程序请求了鼠标就把拖动给它，
+      **Shift + 拖动**才是本地选字。AI agent（opencode / opentui 一类）
+      自己实现选区 UI 时，只有这一档能同时保住两边。
     """
     if raw is None:
         return "always"
     value = raw.strip().lower()
-    return value if value in ("always", "app") else "always"
+    return value if value in ("always", "app", "smart") else "always"
 
 
 def map_key(key: str, character: str | None = None) -> tuple[str, str] | None:
@@ -637,6 +643,10 @@ class TerminalApp(App, inherit_bindings=False):
         self._drag_select_mode: str = resolve_drag_select(
             _os.environ.get("MYRTUI_DRAG_SELECT")
         )
+        # 剪贴板通道策略（0.7.0）：auto = OSC 52 + 系统命令都发
+        self._clipboard_mode: str = clipboard.resolve_clipboard_channel(
+            _os.environ.get("MYRTUI_CLIPBOARD")
+        )[0]
         # dead pane（§12 P2 respawn UX）：_dead 按 pane_id 记状态，
         # _dead_order 记死亡先后（尾部 = 最近死亡 → Ctrl-a r 的默认目标）
         self._dead: dict[str, bool] = {}
@@ -1809,6 +1819,8 @@ class TerminalApp(App, inherit_bindings=False):
 
     def _tick(self) -> None:
         now = time.monotonic()
+        # 剪贴板直通（0.7.0）：pane 内程序发起的复制在这里落到终端 / 系统剪贴板
+        self._drain_clipboard()
         # motion 合并（v0.7）：与 capture 同节拍驱动，30ms 一条
         if self._pending_motion is not None:
             self._flush_motion(now)
@@ -1906,6 +1918,12 @@ class TerminalApp(App, inherit_bindings=False):
         探测结果带回循环侧做拓扑同步后重试；重试预算一轮（旧代码每轮
         ``_poll`` 至多两次 ``backend.poll``，depth=1 时不再探、不再重试）。
         """
+        # 剪贴板兜底（0.7.0）：控制客户端不在时按 1 Hz 差分 paste buffer。
+        # 放在线程段：它是进程调用，绝不进事件循环。失败不影响抓屏。
+        try:
+            self.backend.poll_clipboard_buffers()
+        except Exception:  # 兜底路径，任何异常都只记录
+            log.debug("剪贴板 buffer 轮询失败", exc_info=True)
         try:
             panes, captures = self.backend.poll(offsets)
         except TmuxError as exc:
@@ -2406,10 +2424,18 @@ class TerminalApp(App, inherit_bindings=False):
     def on_pane_mouse_down(self, widget: PaneWidget, event) -> None:
         pid = widget.pane_id
         level = self._mouse_levels.get(pid, LEVEL_NONE)
-        use_gesture = int(event.button) == 1 and (
-            self._drag_select_mode == "always"
-            or (self._drag_select_mode == "app" and level == LEVEL_NONE)
-        )
+        mode = self._drag_select_mode
+        if int(event.button) != 1:
+            use_gesture = False
+        elif mode == "always" or level == LEVEL_NONE:
+            # always：拖拽永远归本地；app / smart 在程序没要鼠标时也归本地
+            use_gesture = True
+        elif mode == "smart" and event.shift:
+            # smart：程序要了鼠标 → 拖动给它；Shift + 拖动才是本地选字
+            # （与真终端「Shift 绕过鼠标上报」的约定一致）
+            use_gesture = True
+        else:
+            use_gesture = False
         if use_gesture:
             self._start_gesture(widget, event)
             return
@@ -3107,6 +3133,39 @@ class TerminalApp(App, inherit_bindings=False):
 
     # ---------- 选区复制 / 粘贴（v0.13 / v0.14） ----------
 
+    def _drain_clipboard(self) -> None:
+        """把 pane 内程序发起的复制转发出去（0.7.0）。
+
+        事件由后端读线程从 ``%output`` 里提取（OSC 52，裸形态与 ``ESC Ptmux;``
+        包裹形态都认），这里只把它变成一次 :meth:`copy_text`——与 ``Ctrl-a c``
+        / 拖拽复制共用同一出口，所以 ``MYRTUI_CLIPBOARD`` 的通道策略对它同样
+        生效。之所以在 tick 里 drain 而不是回调里直接写：回调跑在 tmux 读线程，
+        碰驱动 / DOM 都必须回到事件循环。
+        """
+        take = getattr(self.backend, "take_clipboard_events", None)
+        if take is None:
+            return
+        try:
+            events = take()
+        except Exception:  # 后端替身 / teardown 竞态：静默跳过
+            return
+        for event in events:
+            text = event.text
+            if not text.strip():
+                continue
+            slot = None
+            if event.pane_id is not None:
+                try:
+                    slot = self._pane_ids.index(event.pane_id) + 1
+                except ValueError:
+                    slot = None
+            note = (
+                t("app.copied_pane", count=len(text), pane=slot)
+                if slot is not None
+                else t("app.copied", count=len(text))
+            )
+            self.copy_text(text, note=note)
+
     def action_copy(self) -> None:
         """Ctrl-a c：复制当前选区；无选区只提示（v0.35 不再回落到 pane buffer）。
 
@@ -3132,8 +3191,15 @@ class TerminalApp(App, inherit_bindings=False):
         text: str,
         note: str | None = None,
     ) -> None:
-        """公共复制入口：OSC 52 + 系统命令 + 内部缓冲。"""
-        self.copy_to_clipboard(text)  # OSC 52
+        """公共复制入口：OSC 52 + 系统命令 + 内部缓冲。
+
+        通道由 ``MYRTUI_CLIPBOARD`` 决定（0.7.0）：``auto`` 两条都发，
+        ``osc52`` / ``system`` 只发一条。0.6.1 及以前「SSH 就只发 OSC 52」的
+        规则被删除——写错剪贴板是无害的（没人看），跳过它才是静默失败
+        （0.7.0 计划 §4：本条环境里 ``pbcopy`` 明明是通的）。
+        """
+        if clipboard.use_osc52(self._clipboard_mode):
+            self.copy_to_clipboard(text)  # OSC 52
         self._copy_buffer = text  # 内部缓冲（系统通道失败也存）
         # B1 §3.2-10：pbcopy（~6–10ms 阻塞）走默认线程池（asyncio.to_thread，
         # 无顺序依赖——默认池任务一律不携带 apply 段回投 DOM，见 _copy_to_system）；
@@ -3150,26 +3216,32 @@ class TerminalApp(App, inherit_bindings=False):
 
         ``note`` 供右键菜单等调用方覆盖提示前缀（默认仍是「已复制
         N 字符」）。系统通道失败时统一追加「仅 OSC 52」保留余地。
-
-        v0.35：**SSH 会话**不调用系统命令（``pbcopy`` 写的是远端机器的剪贴板，
-        对本地终端用户无意义，还可能拖慢提示），只发 OSC 52 并立即提示。
         """
-        if clipboard.is_remote_session():
+        prefix = note or t("app.copied", count=len(text))
+        log.debug(
+            "复制 %d 字符：mode=%s remote=%s",
+            len(text), self._clipboard_mode, clipboard.is_remote_session(),
+        )
+        if not clipboard.use_system(self._clipboard_mode):
+            # 用户显式要了 osc52-only：如实说「只发了 OSC 52」
             self._notify(note or t("app.copied_osc52", count=len(text)))
             return
         ok = await asyncio.to_thread(clipboard.copy_to_system_clipboard, text)
-        prefix = note or t("app.copied", count=len(text))
-        message = prefix if ok else t("app.copied_osc52_only", prefix=prefix)
-        self._notify(message)
+        if ok:
+            self._notify(prefix)
+        elif clipboard.use_osc52(self._clipboard_mode):
+            self._notify(t("app.copied_osc52_only", prefix=prefix))
+        else:
+            # 只配置了系统通道且它失败了 → 真的没复制成功，不能报「已复制」
+            self._notify(t("app.copied_failed"))
 
     def action_paste(self) -> None:
         """Ctrl-a v：把文本粘贴进当前活动 pane。
 
-        - **SSH 会话**（v0.35）：远端剪贴板对本地无意义 → 只提示用终端自己的
-          粘贴快捷键（`SSH_PASTE_HINT`：macOS `Cmd+V` / Windows Terminal
-          `Ctrl+V` / Tabby `Ctrl+Shift+V`），不读 ``_copy_buffer`` / 系统剪贴板；
-          终端原生粘贴（``on_paste``）不受影响；
-        - **本地**：系统剪贴板**优先**（``read_system_clipboard``），读不到
+        - **只配了 OSC 52 通道**（``MYRTUI_CLIPBOARD=osc52``）：系统剪贴板
+          读不了 → 提示用终端自己的粘贴快捷键（``SSH_PASTE_HINT``），不读
+          ``_copy_buffer``；终端原生粘贴（``on_paste``）不受影响；
+        - **其它**：系统剪贴板**优先**（``read_system_clipboard``），读不到
           （无命令 / 失败）才回落到内部缓冲 ``_copy_buffer``。
 
         前缀键**全局有效**——侧栏聚焦时同样粘贴到当前活动 pane（与
@@ -3177,8 +3249,8 @@ class TerminalApp(App, inherit_bindings=False):
         **不**贴）口径不同：原生粘贴是「终端替我发的一坨文本」，而
         ``Ctrl-a v`` 是用户显式按下的动作。
         """
-        if clipboard.is_remote_session():
-            self._notify(ssh_paste_hint())
+        if not clipboard.use_system(self._clipboard_mode):
+            self._notify(paste_hint())
             return
         self._paste_from_system(fallback=self._copy_buffer)
 

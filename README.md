@@ -108,7 +108,9 @@ the full cheat sheet. Full tables: [docs/USAGE.md](docs/USAGE.md#key-bindings).
 | `MYRTUI_TRANSPORT` | tmux transport: `auto` (default: resident `tmux -C` client, per-call processes as fallback) / `exec` (one process per call) / `control` (force the resident client) |
 | `MYRTUI_LOG` | where warnings go once the TUI owns the terminal (default: the platform log dir, e.g. `~/Library/Logs/myrtui/myrtui.log`); empty disables it |
 | `MYRTUI_COPY_ON_SELECT` | auto-copy on drag release (default `1`; `0` keeps the selection for `Ctrl-a c`) |
-| `MYRTUI_DRAG_SELECT` | `always` (default) = drag always selects; `app` = when the pane program requested mouse, drag is forwarded to it |
+| `MYRTUI_DRAG_SELECT` | `always` (default) = drag always selects; `app` = when the pane program requested mouse, drag is forwarded to it; `smart` = same, but Shift+drag still selects locally |
+| `MYRTUI_CLIPBOARD` | copy channels: `auto` (default: OSC 52 + native clipboard command) / `osc52` / `system` |
+| `MYRTUI_CLIPBOARD_PASSTHROUGH` | forward copies made by programs inside panes (opencode's select-to-copy, `vim "+y`) to your clipboard (default on; `0` disables) |
 | `MYRTUI_GRAPHICS` | bitmap protocol: `auto` (default) / `sixel` / `tgp` / `unicode` / `off` |
 | `MYRTUI_PAGE_THEME` | LaTeX page theme: `sepia` (default) / `paper` / `gray` / `white` / `dim` / `dark` |
 | `MYRTUI_MATH_BACKEND` | math backend for Markdown preview: `auto` (default) / `plain` / `termtex` |
@@ -127,6 +129,10 @@ the full cheat sheet. Full tables: [docs/USAGE.md](docs/USAGE.md#key-bindings).
   give drag back to the program).
 - **No bitmap inside panes** — images render in the preview layer only.
 - **Soft-wrapped lines copy with extra newlines** (capture works line by line).
+- **A pane program's copy only reaches you through myrtui** — the OSC 52 it emits is
+  forwarded from the tmux control channel (default on). A program that writes the
+  clipboard through its own native command bypasses this, which is fine locally and
+  usually wrong over SSH.
 - **Echo latency ~150 ms when idle** — tmux capture is polled; typing raises the
   rate to ~30 ms.
 

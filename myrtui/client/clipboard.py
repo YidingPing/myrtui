@@ -17,8 +17,13 @@ work on macOS Terminal"*）→ 于是再补一条系统命令通道：
 **读**（v0.14；v0.35 起**优先**）：``Ctrl-a v`` 粘贴时先读系统剪贴板，
 读不到（无命令 / 失败）才回落到内部缓冲。
 
-**SSH 会话**（v0.35）：远端机器的系统剪贴板对本地用户无意义 → 复制只走
-OSC 52，``Ctrl-a v`` 直接提示用终端自己的粘贴快捷键（``is_remote_session``）。
+**SSH 会话**（v0.35 / 0.7.0 修正）：v0.35 认为「远端机器的系统剪贴板对本地
+用户无意义」，于是 SSH 下**只发 OSC 52**、粘贴只提示用终端自己的快捷键。
+0.7.0 实测推翻了这个默认：SSH 里 ``pbcopy`` 照样能用（写的是登录用户的
+pasteboard，远程桌面客户端通常还会同步剪贴板），而 OSC 52 是否被外层终端
+接受**无从判断**——跳过系统通道等于把唯一可验证的出口关掉。
+现在由 ``MYRTUI_CLIPBOARD`` 决定：``auto``（默认）两条都发，``osc52`` /
+``system`` 只发一条（v0.35 的行为用 ``osc52`` 复现）。
 
 探测结果**进程内缓存**：``shutil.which`` 只在第一次调用时跑（每个候选一次
 ``which``，量级毫秒），之后复制/粘贴路径零额外开销。
@@ -35,16 +40,56 @@ log = logging.getLogger("myrtui.clipboard")
 
 
 def is_remote_session() -> bool:
-    """当前前端是否跑在 SSH 会话里（v0.35）。
+    """当前前端是否跑在 SSH 会话里（v0.35；0.7.0 起只用于诊断/措辞）。
 
-    远端会话的「系统剪贴板」是**远端机器**的剪贴板，对本地终端用户没有
-    意义（写进去也拿不到）；此时复制只走 OSC 52，粘贴也不再读远端剪贴板。
-    任一 SSH 环境变量在场即视为远端。
+    远端会话的「系统剪贴板」是**远端机器**的剪贴板。0.7.0 起它不再决定
+    走哪条通道（见模块 docstring）：远程桌面客户端通常会把远端剪贴板同步给
+    用户，写进去是有效的；即使无效，也只是「没人看」，并不比跳过更糟。
     """
     return any(
         os.environ.get(key)
         for key in ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY")
     )
+
+
+# ---------- 通道策略（0.7.0） ----------
+#
+# 写：``auto`` 两条都发（OSC 52 零延迟但可能被终端忽略；系统命令可靠但要
+# 起子进程），``osc52`` / ``system`` 是显式单通道。读：只有系统命令能读。
+CLIPBOARD_ENV = "MYRTUI_CLIPBOARD"
+CHANNEL_AUTO = "auto"
+CHANNEL_OSC52 = "osc52"
+CHANNEL_SYSTEM = "system"
+CHANNELS = (CHANNEL_AUTO, CHANNEL_OSC52, CHANNEL_SYSTEM)
+
+
+def resolve_clipboard_channel(raw: str | None) -> tuple[str, str | None]:
+    """解析 ``MYRTUI_CLIPBOARD`` → ``(mode, warning)``。
+
+    未设 / 空串 = ``auto``；非法值告警后回落 ``auto``（与
+    ``MYRTUI_TRANSPORT`` / ``MYRTUI_IDLE_INTERVAL`` 同口径）。
+    """
+    if raw is None or not raw.strip():
+        return CHANNEL_AUTO, None
+    mode = raw.strip().lower()
+    if mode in CHANNELS:
+        return mode, None
+    warning = (
+        f"{CLIPBOARD_ENV}={raw!r} is not one of {'/'.join(CHANNELS)}; "
+        f"falling back to {CHANNEL_AUTO}"
+    )
+    log.warning(warning)
+    return CHANNEL_AUTO, warning
+
+
+def use_osc52(mode: str) -> bool:
+    """该模式是否发 OSC 52（写通道之一）。"""
+    return mode in (CHANNEL_AUTO, CHANNEL_OSC52)
+
+
+def use_system(mode: str) -> bool:
+    """该模式是否用系统剪贴板命令（写 + 读）。"""
+    return mode in (CHANNEL_AUTO, CHANNEL_SYSTEM)
 
 # 复制命令的超时（秒）：pbcopy/xclip 都是「读 stdin → 写剪贴板 → 退出」，
 # 但个别实现会挂住等 EOF → 超时兜底，不让复制动作卡住 UI。

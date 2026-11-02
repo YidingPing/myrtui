@@ -177,7 +177,7 @@ MESSAGES: dict[str, str] = {
     "page.too_many_pages": "页数过多（{count} > {max}）",
 
     # ---- 应用外壳：菜单 / 状态栏 / 提示（app.py）---------------------------
-    "app.ssh_paste_hint": "SSH 粘贴：macOS Cmd+V · Windows Terminal Ctrl+V · Tabby Ctrl+Shift+V",
+    "app.paste_hint": "用终端自己的粘贴：macOS Cmd+V · Windows Terminal Ctrl+V · Tabby Ctrl+Shift+V",
     "app.job.list_panes": "list-panes 失败",
     "app.job.backend": "backend 调用",
     "menu.image_preview": "预览图片",
@@ -220,6 +220,8 @@ MESSAGES: dict[str, str] = {
     "app.nothing_to_copy": "无可复制内容",
     "app.copied_osc52": "已通过 OSC 52 复制 {count} 字符",
     "app.copied": "已复制 {count} 字符",
+    "app.copied_pane": "已从 pane {pane} 复制 {count} 字符",
+    "app.copied_failed": "复制失败：没有可用的剪贴板通道",
     "app.copied_osc52_only": "{prefix}（仅 OSC 52，终端不支持时无效）",
     "app.nothing_to_paste": "无可粘贴内容",
     "app.pasted": "已粘贴 {count} 字符",

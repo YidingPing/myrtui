@@ -23,9 +23,12 @@ import subprocess
 import threading
 import time
 import uuid
+from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from myrtui import osc52
 from myrtui.i18n import t
 
 log = logging.getLogger("myrtui.tmux")
@@ -51,6 +54,17 @@ PASTE_BUFFER = "myrtui-paste"
 
 # §11 默认历史深度；P2 起可由启动参数 --scrollback 覆盖
 DEFAULT_HISTORY_LIMIT = 5000
+
+# ── 剪贴板直通（0.7.0） ─────────────────────────────────────────────
+#
+# pane 内程序发起的复制（OSC 52）只能从 ``%output`` 里捡——DCS 包裹形态
+# （opencode / codex 在 $TMUX 下总是发这种）连 paste buffer 都不建（tmux 3.8
+# 实测）。事件队列有界、同一内容短时间内只收一次：复制是用户动作，不该因为
+# 程序在动画里重复写而刷屏。
+CLIPBOARD_MAX_EVENTS = 8
+CLIPBOARD_DEDUPE = 0.3  # 同一内容的重发窗口（程序在连续帧里重复写同一条）
+CLIPBOARD_BUFFER_INTERVAL = 1.0  # exec 兜底的轮询间隔（只覆盖裸形态）
+PASSTHROUGH_ENV = "MYRTUI_CLIPBOARD_PASSTHROUGH"
 
 
 class TmuxError(RuntimeError):
@@ -87,6 +101,17 @@ class PaneInfo:
 class CaptureResult:
     text: str
     offset: int  # 实际使用的翻页偏移（断言失败收紧后可能变小，0 = 实时视图）
+
+
+@dataclass(frozen=True)
+class ClipboardEvent:
+    """pane 内程序发起的一次复制（OSC 52）。
+
+    ``pane_id`` 只用于提示措辞（「来自 pane 2」），映射不到槽位时可为 ``None``。
+    """
+
+    text: str
+    pane_id: str | None = None
 
 
 def parse_tmux_version(output: str) -> tuple[int, int] | None:
@@ -224,6 +249,21 @@ def resolve_transport(raw: str | None) -> tuple[str, str | None]:
     return DEFAULT_TRANSPORT, warning
 
 
+_FALSE_VALUES = frozenset({"0", "false", "no", "off"})
+
+
+def resolve_passthrough(raw: str | None) -> bool:
+    """解析 ``MYRTUI_CLIPBOARD_PASSTHROUGH`` → 是否转发 pane 内的 OSC 52。
+
+    未设 / 空串 → **True**（默认开：这是 0.7.0 的主功能）；``0/false/no/off``
+    → 关。其它值同样按开处理（与 ``MYRTUI_COPY_ON_SELECT`` 同口径：宁可开着，
+    不因为手滑值把功能静默关掉）。
+    """
+    if raw is None or not raw.strip():
+        return True
+    return raw.strip().lower() not in _FALSE_VALUES
+
+
 class ControlFramer:
     """把控制模式的行流切成「两条哨兵之间的命令输出」（计划 §2.1）。
 
@@ -319,6 +359,7 @@ class ControlClient:
         session_name: str,
         *,
         timeout: float = CONTROL_READY_TIMEOUT,
+        on_output: Callable[[str], None] | None = None,
     ) -> None:
         token = uuid.uuid4().hex
         self.start = f"__MYRTUI_CTL_{token}_S__"
@@ -326,9 +367,15 @@ class ControlClient:
         self._queue: queue.Queue[str | object] = queue.Queue()
         self._lock = threading.Lock()
         self._closed = threading.Event()
+        # 剪贴板监听（0.7.0）：``%output`` 是通道上唯一的「pane 写了什么」信号，
+        # 而且**与命令块无关**——它永远出现在块外。所以它在 ``_busy`` 门之前
+        # 单独分流：只有命中 OSC 52 的帧才进回调（回调自己再筛一次），
+        # 刷屏时其余行照旧丢弃，队列不会涨。
+        self._on_output = on_output
         # 「有命令在飞」：读线程只在置位时入队，其余时间的 %output 直接丢。
         # 否则画面一直在动（图像、tail -f）时队列会无限涨，下一条命令得先把
         # 积压排空才能看到自己的块——这是超时与掉线的放大器。
+        # （剪贴板靠上面的 ``on_output`` 分流，不受这道门影响。）
         self._busy = threading.Event()
         self.proc = subprocess.Popen(
             [tmux_bin, "-L", socket_name, "-C", "attach", "-t", session_name],
@@ -363,6 +410,15 @@ class ControlClient:
         try:
             assert self.proc.stdout is not None
             for line in self.proc.stdout:
+                if self._on_output is not None and line.startswith("%output "):
+                    # 只做一次前缀判断（刷屏时每帧都有），真正的筛选在回调里。
+                    # 回调异常绝不能杀死读线程：读线程死了 = 之后每条命令都
+                    # 超时 + 无限重连（0.6.0.dev1 的教训）。
+                    try:
+                        self._on_output(line)
+                    except Exception:
+                        log.debug("剪贴板回调异常", exc_info=True)
+                    continue
                 if not self._busy.is_set():
                     continue  # 闲置：%output / 通知直接丢，不占队列
                 self._queue.put(line.rstrip("\r\n"))
@@ -459,6 +515,7 @@ class TmuxBackend:
         tmux_bin: str = "tmux",
         *,
         transport: str = TRANSPORT_EXEC,
+        clipboard_passthrough: bool = True,
     ):
         self.socket = socket_name
         self.session = session_name
@@ -471,6 +528,90 @@ class TmuxBackend:
         self._control_closed = threading.Event()
         self._reconnect_thread: threading.Thread | None = None
         self.reconnects = 0  # 诊断计数（MYRTUI_LOOP_DEBUG=1 时由 cli 记录）
+        # 剪贴板直通（0.7.0）：``%output`` 里提取出来的 OSC 52 → UI 线程取走。
+        # 去重窗口防同一内容被连发两遍（例如程序在帧里重复一次）。
+        self._clip_lock = threading.Lock()
+        self._clip_events: deque[ClipboardEvent] = deque(maxlen=CLIPBOARD_MAX_EVENTS)
+        self._clip_last: tuple[str, float] | None = None
+        self._clip_dropped = 0
+        self.clipboard_enabled = clipboard_passthrough
+        # exec 兜底：控制客户端不在时按 1 Hz 看一次 buffer 列表（只覆盖裸形态）
+        self._buffer_next = 0.0
+        self._buffer_seen: str | None = None
+        self._buffer_ready = False
+
+    # ---------- 剪贴板直通（0.7.0） ----------
+
+    def _on_pane_output(self, line: str) -> None:
+        """控制通道读线程回调：``%output %<pane> <负载>``。
+
+        只做「有没有 ``]52;``」的廉价判断，命中才解转义 / base64。负载里
+        可能同时有多条（程序连续复制），全部按顺序入队。
+        """
+        if not self.clipboard_enabled or "]52;" not in line:
+            return
+        head, _, payload = line.partition(" ")
+        if head != "%output":
+            return
+        pane_id, _, payload = payload.partition(" ")
+        for text in osc52.extract(payload):
+            self._push_clipboard(text, pane_id or None)
+
+    def _push_clipboard(self, text: str, pane_id: str | None = None) -> None:
+        now = time.monotonic()
+        with self._clip_lock:
+            last = self._clip_last
+            if last is not None and last[0] == text and now - last[1] < CLIPBOARD_DEDUPE:
+                return
+            self._clip_last = (text, now)
+            if len(self._clip_events) == CLIPBOARD_MAX_EVENTS:
+                self._clip_dropped += 1
+            self._clip_events.append(ClipboardEvent(text=text, pane_id=pane_id))
+
+    def take_clipboard_events(self) -> list[ClipboardEvent]:
+        """UI 线程取走待转发事件（幂等；没有事件时返回空列表）。"""
+        with self._clip_lock:
+            events = list(self._clip_events)
+            self._clip_events.clear()
+        return events
+
+    def poll_clipboard_buffers(self) -> None:
+        """``exec`` 传输兜底：差分 tmux paste buffer（仅裸 OSC 52 形态）。
+
+        控制客户端在场时 ``%output`` 已经覆盖全部形态，这条路径不跑（它比
+        control 通知慢一个数量级）。只认「最新的那个非 ``myrtui-paste`` 缓冲」，
+        内容与上次相同就不转发——缓冲名会被复用，按名字差分不可靠。
+        """
+        if not self.clipboard_enabled or self._control is not None:
+            return
+        now = time.monotonic()
+        if now < self._buffer_next:
+            return
+        self._buffer_next = now + CLIPBOARD_BUFFER_INTERVAL
+        listing = self._run(["list-buffers", "-F", "#{buffer_name}"], check=False)
+        if listing.returncode != 0:
+            return
+        with self._clip_lock:
+            first_poll, self._buffer_ready = not self._buffer_ready, True
+        names = [
+            name for name in listing.stdout.splitlines()
+            if name and name != PASTE_BUFFER
+        ]
+        if not names:
+            return
+        proc = self._run(["show-buffer", "-b", names[0]], check=False)
+        if proc.returncode != 0 or not proc.stdout:
+            return
+        text = proc.stdout
+        with self._clip_lock:
+            if first_poll:
+                # 首次只看基线：上一个会话残留的 buffer 不该在启动时抢用户剪贴板
+                self._buffer_seen = text
+                return
+            if self._buffer_seen == text:
+                return
+            self._buffer_seen = text
+        self._push_clipboard(text)
 
     # ---------- 基础 ----------
 
@@ -579,7 +720,10 @@ class TmuxBackend:
             return self._control is not None
         self._control_closed.clear()
         try:
-            client = ControlClient(self.tmux, self.socket, self.session)
+            client = ControlClient(
+                self.tmux, self.socket, self.session,
+                on_output=self._on_pane_output,
+            )
         except TmuxError as exc:
             if self.transport == TRANSPORT_CONTROL:
                 raise
@@ -653,7 +797,10 @@ class TmuxBackend:
             if self._control is not None:
                 return
             try:
-                client = ControlClient(self.tmux, self.socket, self.session)
+                client = ControlClient(
+                    self.tmux, self.socket, self.session,
+                    on_output=self._on_pane_output,
+                )
             except (TmuxError, OSError) as exc:
                 log.debug("control 重连第 %d 次失败：%s", attempt, exc)
                 continue

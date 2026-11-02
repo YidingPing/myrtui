@@ -3,7 +3,10 @@
 myrtui is a Textual front end that **does not emulate a terminal**. Every pane
 is a real tmux pane; the UI polls `capture-pane` and paints the text into a
 Textual widget. tmux owns PTYs, scrollback, mouse modes and the inner shell;
-Textual owns layout, focus, input routing and the preview layers.
+Textual owns layout, focus, input routing and the preview layers. The single
+exception to "paint only" is OSC 52: copies made by the program inside a pane are
+read off `%output` and forwarded to the real clipboard (`myrtui/osc52.py`), still
+without interpreting a single cell.
 
 ```
              ┌──────────────────── Textual app (myrtui/client) ───────────────────┐
@@ -29,7 +32,8 @@ Textual owns layout, focus, input routing and the preview layers.
 |---|---|
 | `cli.py` | argparse, instance identity, lock file + takeover protocol, `--root/--shell/--scrollback/--lang`, `ls` / `attach` / `stop` wiring, layout file paths |
 | `instances.py` | instance discovery and lifecycle: lock probing, `ls` table/JSON, attach/stop target resolution, cooperative shutdown marks |
-| `tmux_backend.py` | every tmux invocation: session creation, pane split/close/respawn, `capture-pane`, `send-keys`, `paste-buffer`, resize, `set-clipboard`; the two transports (`exec` / resident `control`), command quoting and framing |
+| `tmux_backend.py` | every tmux invocation: session creation, pane split/close/respawn, `capture-pane`, `send-keys`, `paste-buffer`, resize, `set-clipboard`; the two transports (`exec` / resident `control`), command quoting and framing; the `%output` clipboard watch |
+| `osc52.py` | byte-level extraction of OSC 52 (bare and `ESC Ptmux;` wrapped) from `%output` payloads, including tmux's octal escaping, size caps and query rejection |
 | `i18n.py` / `locales/` | UI language resolution (`--lang` > `MYRTUI_LANG` > `config.json` > locale > `en`), flat `key -> text` catalogs, `t()` with `en` fallback; no Textual import, no module-level `t()` |
 | `layout_state.py` | splitter ratios: `0..1` per dimension, atomic JSON write, format version 2, corrupt file → defaults |
 | `gitlog.py` / `gitstat.py` | `git log` (repo-wide and `--follow` per file) and `git status --porcelain -z -uall` parsing, in worker threads |
@@ -44,7 +48,7 @@ Textual owns layout, focus, input routing and the preview layers.
 | `client/overlay.py` | covered screens stop their update timer, so a full-screen bitmap is never re-sent under an overlay |
 | `client/mdpreview.py` / `mathtext.py` / `mathrender.py` / `mathimg.py` / `katex.py` | Markdown rendering, `$math$` handling, `termtex` bridge, KaTeX asset pipeline |
 | `client/imagepreview.py` / `imageprep.py` / `graphics.py` | image preview, decode/resize/compose in workers, Sixel / TGP detection |
-| `client/clipboard.py` | OSC 52 + platform clipboard commands, SSH detection, internal buffer fallback |
+| `client/clipboard.py` | copy channels (`MYRTUI_CLIPBOARD`: OSC 52 + platform clipboard command), read path and internal-buffer fallback |
 
 ## Identities and state
 
@@ -71,7 +75,8 @@ Textual owns layout, focus, input routing and the preview layers.
    Backend calls run off the event loop, so a slow tmux never blocks the UI
    thread.
 4. Paint is *display only*: keys, paste and mouse are injected back into tmux;
-   myrtui never interprets the pane's output.
+   myrtui never interprets the pane's output, except for OSC 52 clipboard
+   requests (above), which are forwarded rather than rendered.
 
 Consequences worth knowing: echo waits for the next poll (~150 ms idle), and
 soft-wrapped lines appear as separate captured lines. Both are recorded in
@@ -94,8 +99,16 @@ Two ways to talk to the tmux server, chosen by `MYRTUI_TRANSPORT` (default
 
 Both paths share the command builder and parser, so `check=False` semantics and
 `stdout` line counts are identical; the transport only decides who executes.
-That is also why there is no terminal emulation: myrtui paints captured text and
-never interprets `%output`. Things the line protocol cannot carry — stdin
+
+`%output` is the one thing read from the stream, and only for OSC 52: a program
+inside a pane that copies text (opencode's select-to-copy, `vim "+y`) writes that
+sequence into the pane, where tmux either stashes it in a paste buffer (bare
+form) or drops it entirely (the `ESC Ptmux;` wrapper every `$TMUX`-aware TUI
+sends — measured on tmux 3.8). The control client hands every matching line to
+the backend, which extracts the base64 payload and queues it for the UI thread;
+`exec` transport falls back to diffing `list-buffers` once a second, which covers
+the bare form only. Nothing else is interpreted: myrtui still paints captured
+text and never emulates a terminal. Things the line protocol cannot carry — stdin
 (`load-buffer`/paste), arguments containing newlines, `kill-server`, the
 pre-client lifecycle commands — always go through `exec`. A dropped control
 client is closed, the current command runs on `exec`, and reconnection is

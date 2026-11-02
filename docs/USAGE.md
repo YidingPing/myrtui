@@ -308,16 +308,29 @@ you can see what was copied.
   cell, and only the pane where the press started contributes content.
 - Channels: OSC 52 (works in iTerm2/WezTerm/Windows Terminal) plus
   `pbcopy` / `wl-copy` / `xclip` / `clip.exe`. macOS Terminal.app does not
-  support OSC 52 and relies on the command. **SSH sessions send OSC 52 only** —
-  the remote clipboard is not yours.
+  support OSC 52 and relies on the command. **Both are used by default**; narrow
+  them with `MYRTUI_CLIPBOARD=osc52` or `=system`. Over SSH the system clipboard
+  is the *remote* machine's one: harmless, and what you want when the
+  remote-desktop client syncs clipboards (UU Remote, ToDesk, …).
+- **Copies made by the program inside a pane are forwarded.** Select-to-copy in
+  opencode, codex's `/copy`, `vim`'s `"+y`: the program emits OSC 52 into the
+  pane, where tmux either stashes it in a paste buffer (bare form) or drops it
+  entirely (the `ESC Ptmux;` form every `$TMUX`-aware TUI sends). myrtui reads it
+  from the control channel and forwards it to your terminal and system clipboard,
+  showing `Copied N chars from pane k`. Turn it off with
+  `MYRTUI_CLIPBOARD_PASSTHROUGH=0`; a pane program can then still change your
+  clipboard only through its own native command.
 - `MYRTUI_COPY_ON_SELECT=0` disables auto-copy: the selection stays for 10 s,
   `Ctrl-a c` copies it, anything else cancels.
-- Want the program's own drag behaviour (vim visual selection, `ov`)? Set
-  `MYRTUI_DRAG_SELECT=app`. Clicks, wheel and right/middle click keep working.
+- Want the program's own drag behaviour (vim visual selection, opencode's
+  selection UI)? `MYRTUI_DRAG_SELECT=app` forwards every drag to the program;
+  `smart` follows the terminal convention — the program keeps the drag while
+  **Shift+drag** selects locally. Clicks, wheel and right/middle click keep
+  working in all three modes.
 - Pasting (`Ctrl-a v`) prefers the system clipboard and falls back to the
-  internal buffer. In SSH sessions myrtui only tells you which terminal shortcut
-  to use (macOS `Cmd+V`, Windows Terminal `Ctrl+V`, Tabby `Ctrl+Shift+V`),
-  because the remote clipboard is the wrong one. Content is pasted verbatim,
+  internal buffer. With `MYRTUI_CLIPBOARD=osc52` there is no clipboard to read,
+  so myrtui only tells you which terminal shortcut to use (macOS `Cmd+V`,
+  Windows Terminal `Ctrl+V`, Tabby `Ctrl+Shift+V`). Content is pasted verbatim,
   including trailing newlines.
 
 ## Environment variables
@@ -329,7 +342,9 @@ you can see what was copied.
 | `MYRTUI_IDLE_INTERVAL` | `0.15` | idle capture interval in seconds (clamped to `0.05–5.0`); while content keeps changing the loop speeds up to ~17 Hz by itself; raise it for secondary instances (`MYRTUI_IDLE_INTERVAL=0.5 myrtui`) |
 | `MYRTUI_TRANSPORT` | `auto` | tmux transport: `auto` = a resident `tmux -C` client, falling back to one process per call when attach fails; `exec` = one process per call (old path); `control` = require the resident client (errors out if it cannot start) |
 | `MYRTUI_COPY_ON_SELECT` | `1` | auto-copy on drag release (`0/false/no/off` disables) |
-| `MYRTUI_DRAG_SELECT` | `always` | `always` = drag always selects; `app` = forward drag when the program asked for mouse |
+| `MYRTUI_CLIPBOARD` | `auto` | copy channels: `auto` = OSC 52 + system command, `osc52` = terminal only, `system` = native clipboard command only |
+| `MYRTUI_CLIPBOARD_PASSTHROUGH` | `1` | forward copies made by programs inside panes (OSC 52) to the terminal / system clipboard (`0/false/no/off` disables) |
+| `MYRTUI_DRAG_SELECT` | `always` | `always` = drag always selects; `app` = forward drag when the program asked for mouse; `smart` = same as `app`, but Shift+drag still selects locally |
 | `MYRTUI_GRAPHICS` | `auto` | `auto` / `sixel` / `tgp` / `unicode` / `off` (preview bitmaps only) |
 | `MYRTUI_CELL_PX` | — | override cell size in pixels (`10x20`) when the terminal does not report it |
 | `MYRTUI_PAGE_THEME` | `sepia` | `sepia` / `paper` / `gray` / `white` / `dim` / `dark` for the LaTeX page view |

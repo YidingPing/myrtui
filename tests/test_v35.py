@@ -663,8 +663,13 @@ def test_click_timing_sends_single_combined_sequence(copied, app_root):
 # ---------- 剪贴板语义 ----------
 
 
-def test_ssh_copy_only_osc52(monkeypatch, app_root):
-    """SSH 会话复制：只发 OSC 52，不调用系统命令，提示不甩锅给用户。"""
+def test_ssh_copy_still_writes_system_clipboard(monkeypatch, app_root):
+    """0.7.0：SSH 不再是「只用 OSC 52」的理由。
+
+    v0.35 的默认在 0.7.0 被实测推翻：SSH 里 ``pbcopy`` 也能写登录用户的
+    pasteboard（远程桌面客户端通常还会同步），而 OSC 52 是否被外层终端接受
+    无从判断。默认两条都发，由 ``MYRTUI_CLIPBOARD`` 显式收窄。
+    """
 
     monkeypatch.setenv("SSH_CONNECTION", "192.0.2.10 1234 22")  # TEST-NET-1，避免私网地址
     called: list[str] = []
@@ -682,26 +687,49 @@ def test_ssh_copy_only_osc52(monkeypatch, app_root):
             app.copy_text("oscy")
             await pilot.pause(0.1)
             assert app._clipboard == "oscy"
-            assert called == []
-            assert "OSC 52" in app._notice_text
-            assert "仅 OSC 52" not in app._notice_text
+            assert called == ["oscy"]  # 系统通道照样写
+            assert "OSC 52" not in app._notice_text
 
     asyncio.run(scenario())
 
 
-def test_ssh_paste_points_to_terminal_shortcuts(monkeypatch, app_root):
-    """SSH 会话 ``Ctrl-a v``：提示三种常见外层终端的粘贴键，不读剪贴板、
-    不调用 backend.paste。
+def test_clipboard_osc52_only_copy(monkeypatch, app_root):
+    """``MYRTUI_CLIPBOARD=osc52``：只发 OSC 52，不调系统命令。"""
 
-    v0.35 初版只写 ``Ctrl+Shift+V``（Tabby），但 macOS 终端是 ``Cmd+V``、
-    Windows Terminal 是 ``Ctrl+V``；SSH 下识别不了外层客户端 → 并列提示。
+    monkeypatch.setenv("MYRTUI_CLIPBOARD", "osc52")
+    called: list[str] = []
+    monkeypatch.setattr(
+        clipboard,
+        "copy_to_system_clipboard",
+        lambda text: called.append(text) or True,
+    )
+
+    async def scenario():
+        backend = _FakeBackend(1)
+        app = TerminalApp(backend, app_root)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.3)
+            app.copy_text("oscy")
+            await pilot.pause(0.1)
+            assert app._clipboard == "oscy"
+            assert called == []
+            assert "OSC 52" in app._notice_text
+
+    asyncio.run(scenario())
+
+
+def test_clipboard_osc52_only_paste_points_to_terminal(monkeypatch, app_root):
+    """``MYRTUI_CLIPBOARD=osc52`` 的 ``Ctrl-a v``：提示三种常见外层终端的
+    粘贴键，不读剪贴板、不调用 backend.paste。
+
+    0.7.0 起这条提示由「系统通道被显式关掉」触发，不再由「是否 SSH」触发。
     """
 
-    monkeypatch.setenv("SSH_TTY", "/dev/ttys042")
+    monkeypatch.setenv("MYRTUI_CLIPBOARD", "osc52")
     monkeypatch.setattr(
         clipboard,
         "read_system_clipboard",
-        lambda: pytest.fail("SSH 会话不得读远端系统剪贴板"),
+        lambda: pytest.fail("osc52-only 模式不得读系统剪贴板"),
     )
 
     async def scenario():
@@ -717,6 +745,24 @@ def test_ssh_paste_points_to_terminal_shortcuts(monkeypatch, app_root):
             assert "Cmd+V" in app._notice_text
             assert "Ctrl+V" in app._notice_text
             assert "Ctrl+Shift+V" in app._notice_text
-            assert "SSH" in app._notice_text
+
+    asyncio.run(scenario())
+
+
+def test_ssh_paste_reads_system_clipboard(monkeypatch, app_root):
+    """0.7.0：SSH 会话的 ``Ctrl-a v`` 照样读系统剪贴板（远程桌面会同步）。"""
+
+    monkeypatch.setenv("SSH_TTY", "/dev/ttys042")
+    monkeypatch.setattr(clipboard, "read_system_clipboard", lambda: "remote-text")
+
+    async def scenario():
+        backend = _FakeBackend(1)
+        app = TerminalApp(backend, app_root)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.3)
+            await pilot.press("ctrl+a")
+            await pilot.press("v")
+            await pilot.pause(0.2)
+            assert backend.pasted == [("p0", "remote-text")]
 
     asyncio.run(scenario())

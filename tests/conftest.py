@@ -35,6 +35,8 @@ def _isolate_ssh_env(monkeypatch):
         "SSH_TTY",
         "MYRTUI_COPY_ON_SELECT",
         "MYRTUI_DRAG_SELECT",
+        "MYRTUI_CLIPBOARD",
+        "MYRTUI_CLIPBOARD_PASSTHROUGH",
     ):
         monkeypatch.delenv(key, raising=False)
 

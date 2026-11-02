@@ -106,7 +106,9 @@ window/pane 创建时快照选项，`Ctrl-a r` 重开的也是建窗时记录的
 | `MYRTUI_LOOP_DEBUG` | `=1` 时把事件循环迟到 > 30ms 的事件写到 stderr（性能遥测，排障/验收用，默认关闭、无行为影响）。 |
 | `MYRTUI_MOUSE_DEBUG` | `=1` 时把每个鼠标事件与拖拽结论写进 `<tmp>/myrtui-mouse-debug-<pid>.log`（排障用，默认关闭）。 |
 | `MYRTUI_COPY_ON_SELECT` | 左键拖拽松手后是否**自动复制**（默认 `1`；`0/false/no/off` 关闭）。关闭后选区保持高亮 10s，按 `Ctrl-a c` 复制，其他键 / 点击 / 滚轮取消。 |
-| `MYRTUI_DRAG_SELECT` | `always`（默认）= 左键拖拽**永远**由 myrtui 选字；`app` = 恢复 v0.34 行为（pane 内程序请求了鼠标时，拖拽原样转给程序，如 vim `mouse=a` 的拖动可视选择、`ov` 自己的拖选）。 |
+| `MYRTUI_DRAG_SELECT` | `always`（默认）= 左键拖拽**永远**由 myrtui 选字；`app` = 恢复 v0.34 行为（pane 内程序请求了鼠标时，拖拽原样转给程序，如 vim `mouse=a` 的拖动可视选择、`ov` 自己的拖选）；`smart` = 同 `app`，但 **Shift + 拖动**仍是 myrtui 选字（真终端的约定，agent 自己的选区 UI 与本地选字可同时用）。 |
+| `MYRTUI_CLIPBOARD` | 复制通道：`auto`（默认，OSC 52 + 系统命令都发）/ `osc52`（只发 OSC 52）/ `system`（只调系统命令）。非法值告警后按 `auto`。 |
+| `MYRTUI_CLIPBOARD_PASSTHROUGH` | 是否把 **pane 内程序发起的复制**（OSC 52）转发到终端 / 系统剪贴板（默认开；`0/false/no/off` 关闭）。 |
 | `MYRTUI_GRAPHICS` | 预览位图协议：`auto`（默认，启动时探测终端）/ `sixel` / `tgp` 强制 / `unicode` / `off` 关闭。缺 `textual-image`、非 tty、探测失败都等同 `unicode`；非法值告警后回落 `auto`。只影响图片与 LaTeX 整篇版面。 |
 | `MYRTUI_CHROME` | 指定 Chrome/Chromium（`v` LaTeX 整篇排版用；默认常见安装路径 → `PATH` 探测）。 |
 | `MYRTUI_CELL_PX` | 覆盖终端单元格像素尺寸（如 `10x20`）；终端不回报 cell 尺寸时用它校正图片与整篇版面的像素换算。 |
@@ -202,22 +204,30 @@ capture 刷新漂移。
   内容（拖到侧栏 / 另一个 pane 也只复制按下 pane 覆盖的部分）；
 - 复制通道：OSC 52（iTerm2/WezTerm/Windows Terminal 有效）+ 系统命令
   （`pbcopy`/`wl-copy`/`xclip`/`clip.exe`）——**macOS Terminal.app 不支持 OSC 52**，
-  靠后者兜底；**SSH 会话只发 OSC 52**（远端 `pbcopy` 写的是远端机器的剪贴板，
-  对本地用户没意义）；
+  靠后者兜底。两条**默认都发**，用 `MYRTUI_CLIPBOARD=osc52` / `=system` 收窄。
+  SSH 会话里系统剪贴板是**远端机器**的：写进去无害，而远程桌面客户端
+  （UU 远程、ToDesk 之类）通常会同步——这正是它该被保留的理由；
+- **pane 内程序自己的复制也会被转发（0.7.0）**：opencode 的「选择即复制」、
+  codex 的 `/copy`、vim 的 `"+y` 都是往 pane 里发 OSC 52，而 tmux 要么把它
+  塞进 paste buffer（裸形态）、要么直接丢弃（`$TMUX` 下的 `ESC Ptmux;` 形态）。
+  myrtui 从控制通道里把它捡出来，转发给终端与系统剪贴板，并在顶栏提示
+  「已从 pane k 复制 N 字符」。`MYRTUI_CLIPBOARD_PASSTHROUGH=0` 可关闭；
 - 自动复制不想要？`MYRTUI_COPY_ON_SELECT=0`：松手保持高亮 10s，按 `Ctrl-a c`
   复制，其他键 / 点击 / 滚轮取消；
 - **迁移注意（vim / 文件管理器用户）**：默认 `always` 会**收走程序的左键拖拽**——
   vim `mouse=a` 的拖动可视选择、`ov` 自己的拖选都改为 myrtui 选字。需要拿回程序
-  拖拽时设 `MYRTUI_DRAG_SELECT=app`（单击 / 滚轮 / 右键 / 中键的转发不受影响）。
+  拖拽时设 `MYRTUI_DRAG_SELECT=app`（单击 / 滚轮 / 右键 / 中键的转发不受影响）；
+  想要两边都要（程序拿普通拖动，Shift+拖动才本地选字）用
+  `MYRTUI_DRAG_SELECT=smart`——真终端的约定就是这一档。
 
 **粘贴（v0.14；v0.35 改优先级）**：`Ctrl-a v` 把文本送进当前活动 pane。
 
-- **本地**：**系统剪贴板优先**（`pbpaste`/`wl-paste`/`xclip`/`Get-Clipboard`），
+- **默认**：**系统剪贴板优先**（`pbpaste`/`wl-paste`/`xclip`/`Get-Clipboard`），
   读不到（无命令 / 失败）才回落到 myrtui 内部缓冲（`Ctrl-a c` 复制过的内容）。
   注意取舍：系统剪贴板里的无关旧内容会排在内部缓冲前面；
-- **SSH 会话**：远端剪贴板对本地无意义 → 只提示用终端自己的粘贴快捷键
-  （macOS `Cmd+V` / Windows Terminal `Ctrl+V` / Tabby `Ctrl+Shift+V`；SSH 下
-  识别不了外层客户端，故并列提示），不读远端剪贴板、也不粘内部旧值；
+- **`MYRTUI_CLIPBOARD=osc52`**：没有可读的剪贴板 → 只提示用终端自己的粘贴快捷键
+  （macOS `Cmd+V` / Windows Terminal `Ctrl+V` / Tabby `Ctrl+Shift+V`；拿不到
+  `TERM_PROGRAM` 时并列提示），不读系统剪贴板、也不粘内部旧值；
 - 终端原生粘贴（`Cmd+V` / `Ctrl+V` / `Ctrl+Shift+V`，取决于外层终端）始终
   可用，走同一条 tmux `paste-buffer` 通道（程序请求了 bracketed paste 才会包
   bracket）。
