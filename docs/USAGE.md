@@ -323,10 +323,11 @@ you can see what was copied.
 - `MYRTUI_COPY_ON_SELECT=0` disables auto-copy: the selection stays for 10 s,
   `Ctrl-a c` copies it, anything else cancels.
 - Want the program's own drag behaviour (vim visual selection, opencode's
-  selection UI)? `MYRTUI_DRAG_SELECT=app` forwards every drag to the program;
+  select-to-copy)? `MYRTUI_DRAG_SELECT=app` forwards every drag to the program;
   `smart` follows the terminal convention — the program keeps the drag while
   **Shift+drag** selects locally. Clicks, wheel and right/middle click keep
-  working in all three modes.
+  working in all three modes. myrtui stops its own highlight while a drag is
+  forwarded, so you never see two selections at once.
 - Pasting (`Ctrl-a v`) prefers the system clipboard and falls back to the
   internal buffer. With `MYRTUI_CLIPBOARD=osc52` there is no clipboard to read,
   so myrtui only tells you which terminal shortcut to use (macOS `Cmd+V`,

@@ -2439,7 +2439,13 @@ class TerminalApp(App, inherit_bindings=False):
         if use_gesture:
             self._start_gesture(widget, event)
             return
-        # 旧路径：右键 / 中键 / MYRTUI_DRAG_SELECT=app 下程序抢鼠标
+        # 旧路径：右键 / 中键 / MYRTUI_DRAG_SELECT=app|smart 下程序抢鼠标
+        if mode in ("app", "smart") and level != LEVEL_NONE:
+            # 0.7.0：拖动归程序时，别再让 Textual 同时点亮一套选区——否则
+            # opencode 自己的高亮和 myrtui 的高亮叠在一起，松手后还残留一块
+            # （Textual 只在下一个 MouseDown 才清）。clear_selection 会一并
+            # 清掉 _select_state，后续 MouseMove 不会再续选。
+            self._clear_screen_selection()
         self._mouse_down_pane = pid
         self._mouse_down_forwarded = can_forward(
             self._mouse_levels.get(pid, LEVEL_NONE), "press"

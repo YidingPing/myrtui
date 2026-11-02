@@ -442,6 +442,8 @@ def test_smart_drag_forwards_to_app(copied, monkeypatch, app_root):
             assert sent, "smart 模式下拖动必须转发给程序"
             assert app._gesture is None
             assert copied == []
+            # 0.7.0：拖动归程序时不再叠加 myrtui 的 Textual 选区
+            assert not app.screen.selections
 
     asyncio.run(scenario())
 

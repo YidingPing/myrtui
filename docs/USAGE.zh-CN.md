@@ -218,7 +218,9 @@ capture 刷新漂移。
   vim `mouse=a` 的拖动可视选择、`ov` 自己的拖选都改为 myrtui 选字。需要拿回程序
   拖拽时设 `MYRTUI_DRAG_SELECT=app`（单击 / 滚轮 / 右键 / 中键的转发不受影响）；
   想要两边都要（程序拿普通拖动，Shift+拖动才本地选字）用
-  `MYRTUI_DRAG_SELECT=smart`——真终端的约定就是这一档。
+  `MYRTUI_DRAG_SELECT=smart`——真终端的约定就是这一档。**opencode 自己的
+  拖拽选区/复制必须用 `smart` 或 `app`**（默认的 `always` 会把拖动收走，
+  它根本收不到事件）。转发期间 myrtui 不再点亮自己的选区，不会出现两套高亮。
 
 **粘贴（v0.14；v0.35 改优先级）**：`Ctrl-a v` 把文本送进当前活动 pane。
 
