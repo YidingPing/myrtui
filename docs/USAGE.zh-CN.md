@@ -109,6 +109,7 @@ window/pane 创建时快照选项，`Ctrl-a r` 重开的也是建窗时记录的
 | `MYRTUI_DRAG_SELECT` | `smart`（默认）= 真终端约定：pane 内程序请求了鼠标就把拖动转给它（vim `mouse=a`、`ov` 拖选、opencode 选择即复制），**Shift + 拖动**才由 myrtui 选字；`always` = 左键拖拽**永远**由 myrtui 选字（v0.35 行为）；`app` = 只要程序请求了鼠标就转给它，没有 Shift 逃生口。 |
 | `MYRTUI_CLIPBOARD` | 复制通道：`auto`（默认，OSC 52 + 系统命令都发）/ `osc52`（只发 OSC 52）/ `system`（只调系统命令）。非法值告警后按 `auto`。 |
 | `MYRTUI_CLIPBOARD_PASSTHROUGH` | 是否把 **pane 内程序发起的复制**（OSC 52）转发到终端 / 系统剪贴板（默认开；`0/false/no/off` 关闭）。 |
+| `MYRTUI_OUTER_MUX_HINT` | 启动时检测到外层 tmux / screen 是否提示一次排障文案（默认开；`0/false/no/off` 关闭）。 |
 | `MYRTUI_GRAPHICS` | 预览位图协议：`auto`（默认，启动时探测终端）/ `sixel` / `tgp` 强制 / `unicode` / `off` 关闭。缺 `textual-image`、非 tty、探测失败都等同 `unicode`；非法值告警后回落 `auto`。只影响图片与 LaTeX 整篇版面。 |
 | `MYRTUI_CHROME` | 指定 Chrome/Chromium（`v` LaTeX 整篇排版用；默认常见安装路径 → `PATH` 探测）。 |
 | `MYRTUI_CELL_PX` | 覆盖终端单元格像素尺寸（如 `10x20`）；终端不回报 cell 尺寸时用它校正图片与整篇版面的像素换算。 |
@@ -235,6 +236,36 @@ opencode）时，拖动**转给程序**：它自己的选区 UI 能用，它复�
 - 终端原生粘贴（`Cmd+V` / `Ctrl+V` / `Ctrl+Shift+V`，取决于外层终端）始终
   可用，走同一条 tmux `paste-buffer` 通道（程序请求了 bracketed paste 才会包
   bracket）。
+
+### 在外层 tmux 里（UU 远程、本地镜像）
+
+myrtui 自己可以被套在另一层复用器里——**UU 远程的终端本身就是一个 tmux 3.5a
+会话**。外层如果 `mouse on` 且覆盖了 root 表的 `MouseDrag1Pane`，它会在第一次
+拖动时进 copy-mode：按下能到 myrtui，**按住期间的 motion 全被吃掉**，松手时
+`copy-pipe pbcopy` 把外层选区写进剪贴板。症状是「拖动选不中，但剪贴板里多了点
+东西」。myrtui 启动时能识别外层 tmux / screen 并给一行提示；真正的修法在外层
+服务端。
+
+把 tmux 的默认绑定恢复回去（要鼠标的程序转发给它，其余仍走 copy-mode）。UU
+远程：
+
+```sh
+UU="/Applications/UURemote.app/Contents/Helpers/tmux/uuyc-mux"
+S="$HOME/Library/Application Support/UURemote/tmux.sock"
+"$UU" -S "$S" bind -Troot MouseDrag1Pane \
+  if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' \
+  'send-keys -M' 'copy-mode -M'
+```
+
+任何 tmux 都是同一条命令（`tmux bind -Troot MouseDrag1Pane …`）；用
+`list-keys -T root | grep MouseDrag1Pane` 确认。改完之后：在请求了鼠标的程序上
+拖动 → 转给程序（myrtui 再按 `MYRTUI_DRAG_SELECT` 处理）；在普通 shell 输出上
+拖动 → 仍走外层的拖选复制。
+
+绑定只存在于外层 server 的运行时，它一重启就没了——再跑一次即可（写进
+`~/.zshrc` 的函数最省事；**不要**去改 UU app bundle 里的 `uuremote.conf`，升级
+与签名都会踩）。粗暴替代是 `tmux set -g mouse off`：所有鼠标事件都交给程序，代价
+是外层自己的拖选复制也没了。
 
 ## 左侧侧栏（文件树 + Git 历史）
 

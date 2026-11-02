@@ -181,6 +181,7 @@ MESSAGES: dict[str, str] = {
 
     # ---- app shell: menus, status bar, notices (app.py) --------------------
     "app.paste_hint": "Paste with your terminal: macOS Cmd+V · Windows Terminal Ctrl+V · Tabby Ctrl+Shift+V",
+    "app.outer_mux_hint": "Outer tmux detected: if dragging does not select, run tmux set -g mouse off in it (USAGE: Inside another tmux; UU Remote needs MouseDrag1Pane restored)",
     "app.job.list_panes": "list-panes failed",
     "app.job.backend": "backend call",
     "menu.image_preview": "Preview image",

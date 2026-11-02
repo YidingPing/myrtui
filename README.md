@@ -111,6 +111,7 @@ the full cheat sheet. Full tables: [docs/USAGE.md](docs/USAGE.md#key-bindings).
 | `MYRTUI_DRAG_SELECT` | `smart` (default) = the program gets the drag when it asked for mouse (its own selection UI works), Shift+drag selects locally; `always` = drag always selects; `app` = forward every drag to the program |
 | `MYRTUI_CLIPBOARD` | copy channels: `auto` (default: OSC 52 + native clipboard command) / `osc52` / `system` |
 | `MYRTUI_CLIPBOARD_PASSTHROUGH` | forward copies made by programs inside panes (opencode's select-to-copy, `vim "+y`) to your clipboard (default on; `0` disables) |
+| `MYRTUI_OUTER_MUX_HINT` | show the startup hint when myrtui itself runs inside another tmux/screen (default on; `0` disables) |
 | `MYRTUI_GRAPHICS` | bitmap protocol: `auto` (default) / `sixel` / `tgp` / `unicode` / `off` |
 | `MYRTUI_PAGE_THEME` | LaTeX page theme: `sepia` (default) / `paper` / `gray` / `white` / `dim` / `dark` |
 | `MYRTUI_MATH_BACKEND` | math backend for Markdown preview: `auto` (default) / `plain` / `termtex` |
@@ -134,6 +135,10 @@ the full cheat sheet. Full tables: [docs/USAGE.md](docs/USAGE.md#key-bindings).
   forwarded from the tmux control channel (default on). A program that writes the
   clipboard through its own native command bypasses this, which is fine locally and
   usually wrong over SSH.
+- **An outer tmux can steal the drag** — if myrtui itself runs inside a multiplexer
+  (UU Remote's terminal is one), that server's mouse bindings run first and a drag may
+  never arrive. myrtui shows a startup hint when it detects one; the one-line fix is in
+  USAGE under "Inside another tmux".
 - **Echo latency ~150 ms when idle** — tmux capture is polled; typing raises the
   rate to ~30 ms.
 

@@ -37,6 +37,11 @@ def _isolate_ssh_env(monkeypatch):
         "MYRTUI_DRAG_SELECT",
         "MYRTUI_CLIPBOARD",
         "MYRTUI_CLIPBOARD_PASSTHROUGH",
+        # 外层复用器探测（0.8.0）：开发机 / CI 若本身跑在 tmux 或 screen 里，
+        # 启动提示会凭空出现，把「无提示」类断言全打红。要测这条的用例自己设。
+        "TMUX",
+        "STY",
+        "TERM_PROGRAM",
     ):
         monkeypatch.delenv(key, raising=False)
 

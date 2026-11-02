@@ -48,6 +48,7 @@ from myrtui.mouse import (
     wheel,
 )
 from myrtui.i18n import t
+from myrtui.termenv import HINT_ENV, hint_enabled, outer_multiplexer
 from myrtui.tmux_backend import CaptureResult, PaneInfo, TmuxBackend, TmuxError
 
 import os as _os
@@ -101,6 +102,9 @@ HELP_HIDE_GRACE = 0.25  # v0.22：离开 `?` 的宽限，留给「移进浮层�
 FAIL_LIMIT = 5  # 连续 N 次 tick capture 失败 → 提示失去连接（§9）
 RECONNECT_NOTICE = 2.0  # P2 断线重连：恢复后「已重新连接」驻留时长（秒）
 NOTICE_SECONDS = 2.0  # v0.13 顶栏瞬时提示（复制结果等）驻留时长（秒）
+# 0.8.0：识别到外层 tmux / screen 时那条排障提示的驻留时长。比普通提示长得多
+# ——它是一条要用户动手的命令，2 秒根本读不完；只在外层复用器在场时出现一次。
+OUTER_MUX_HINT_SECONDS = 10.0
 # ── v0.35 拖拽选字 / 松手自动复制 ─────────────────────────────────────
 DRAG_THRESHOLD_CELLS = 2  # 指针移动 ≥ 2 格才算拖拽（1 格内容忍手抖，仍按点击）
 THAW_DELAY = 0.6  # 自动复制后高亮保留时长（秒），让用户看清复制了什么
@@ -1749,6 +1753,15 @@ class TerminalApp(App, inherit_bindings=False):
             # §6 P1：持锁者每 500ms 读旁挂标记，两级校验全过才让位；
             # stop 标记同周期读取（实例管理计划 §3.4），有效则整个退场
             self.set_interval(SENTRY_INTERVAL, self._check_takeover)
+        # 0.7.0 起 pane 内的复制走 OSC 52 直通，鼠标拖动默认归程序（smart）；
+        # 但外层复用器可能先把拖动收走（UU 远程的 tmux 实测：按下能到，按住
+        # 期间的 motion 全进 copy-mode）。这里只在识别到外层复用器时提示一次，
+        # 绝不改用户终端的配置——那条命令由用户自己决定要不要跑。
+        if (
+            outer_multiplexer(_os.environ) is not None
+            and hint_enabled(_os.environ.get(HINT_ENV))
+        ):
+            self._notify(t("app.outer_mux_hint"), seconds=OUTER_MUX_HINT_SECONDS)
         if self._loop_debug:
             self._install_loop_probe()
 

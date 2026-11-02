@@ -33,6 +33,7 @@ without interpreting a single cell.
 | `cli.py` | argparse, instance identity, lock file + takeover protocol, `--root/--shell/--scrollback/--lang`, `ls` / `attach` / `stop` wiring, layout file paths |
 | `instances.py` | instance discovery and lifecycle: lock probing, `ls` table/JSON, attach/stop target resolution, cooperative shutdown marks |
 | `tmux_backend.py` | every tmux invocation: session creation, pane split/close/respawn, `capture-pane`, `send-keys`, `paste-buffer`, resize, `set-clipboard`; the two transports (`exec` / resident `control`), command quoting and framing; the `%output` clipboard watch |
+| `termenv.py` | detects an enclosing tmux/screen (UU Remote's terminal is one); its mouse bindings can take a drag before it reaches myrtui, so the app only warns |
 | `osc52.py` | byte-level extraction of OSC 52 (bare and `ESC Ptmux;` wrapped) from `%output` payloads, including tmux's octal escaping, size caps and query rejection |
 | `i18n.py` / `locales/` | UI language resolution (`--lang` > `MYRTUI_LANG` > `config.json` > locale > `en`), flat `key -> text` catalogs, `t()` with `en` fallback; no Textual import, no module-level `t()` |
 | `layout_state.py` | splitter ratios: `0..1` per dimension, atomic JSON write, format version 2, corrupt file → defaults |
