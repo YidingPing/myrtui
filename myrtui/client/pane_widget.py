@@ -230,13 +230,17 @@ class PaneWidget(Static, can_focus=True):
 
     @property
     def allow_select(self) -> bool:
-        """Textual 是否允许在本控件上起选区（v0.35：默认恒允许）。
+        """Textual 是否允许在本控件上起选区（v0.35 / 0.7.0）。
 
         规则：
 
-        - ``MYRTUI_DRAG_SELECT=always``（默认）→ **恒 True**。拖拽永远由
-          myrtui 做本地选区；程序请求了鼠标也不影响（单击 / 滚轮 / 右键 /
-          中键仍走 §10.2 的转发门控）；
+        - ``MYRTUI_DRAG_SELECT=always`` → **恒 True**。拖拽永远由 myrtui 做
+          本地选区；程序请求了鼠标也不影响（单击 / 滚轮 / 右键 / 中键仍走
+          §10.2 的转发门控）；
+        - ``MYRTUI_DRAG_SELECT=smart``（0.7.0 起默认）→ **恒 True**：普通拖动
+          虽然归程序，但 Shift+拖动仍要能起选区，所以这里不能按鼠标级别关掉
+          （Screen 起选区的时机拿不到修饰键）。归属切换后残留的选区由
+          ``App.on_pane_mouse_down`` 的转发分支统一清掉；
         - ``MYRTUI_DRAG_SELECT=app`` → 恢复 v0.34 门控：pane 内程序**未**
           请求鼠标（``LEVEL_NONE``）才允许选区；
         - 未挂载 / 无 app 上下文 → ``False``（不猜）。
@@ -248,7 +252,7 @@ class PaneWidget(Static, can_focus=True):
             app = self.app
         except Exception:  # 未挂载 / 无活动 app → 不允许
             return False
-        if getattr(app, "_drag_select_mode", "always") != "app":
+        if getattr(app, "_drag_select_mode", "smart") != "app":
             return True
         levels = getattr(app, "_mouse_levels", None)
         if not isinstance(levels, dict):

@@ -299,10 +299,14 @@ from the pane side.
 
 ## Selection and clipboard
 
-Dragging with the left button **always** selects text, regardless of whether the
-pane program requested mouse reporting. Releasing copies automatically (OSC 52
-plus a native clipboard command); the selection stays highlighted for 600 ms so
-you can see what was copied.
+Dragging selects and copies, but **which side owns the drag follows the terminal
+convention** (`MYRTUI_DRAG_SELECT=smart`, the default): when the pane program
+asked for mouse (vim, htop, opencode), the drag is forwarded to it — its own
+selection UI works, and whatever it copies is forwarded back to you (below).
+**Shift+drag** selects locally instead. When the program did not ask for mouse,
+the drag is myrtui's: releasing copies automatically (OSC 52 plus a native
+clipboard command) and the selection stays highlighted for 600 ms so you can see
+what was copied. `MYRTUI_DRAG_SELECT=always` takes every drag back (v0.35).
 
 - Copied text: trailing blank cells trimmed, CJK/wide characters aligned per
   cell, and only the pane where the press started contributes content.
@@ -322,12 +326,12 @@ you can see what was copied.
   clipboard only through its own native command.
 - `MYRTUI_COPY_ON_SELECT=0` disables auto-copy: the selection stays for 10 s,
   `Ctrl-a c` copies it, anything else cancels.
-- Want the program's own drag behaviour (vim visual selection, opencode's
-  select-to-copy)? `MYRTUI_DRAG_SELECT=app` forwards every drag to the program;
-  `smart` follows the terminal convention — the program keeps the drag while
-  **Shift+drag** selects locally. Clicks, wheel and right/middle click keep
-  working in all three modes. myrtui stops its own highlight while a drag is
-  forwarded, so you never see two selections at once.
+- `MYRTUI_DRAG_SELECT`: `smart` (default) — program gets the drag, Shift+drag
+  selects locally; `always` — every drag selects locally (v0.35 behaviour, the
+  program never sees a drag); `app` — the drag goes to the program whenever it
+  asked for mouse, without a Shift escape hatch. Clicks, wheel and right/middle
+  click keep working in all three modes, and myrtui stops its own highlight
+  while a drag is forwarded, so you never see two selections at once.
 - Pasting (`Ctrl-a v`) prefers the system clipboard and falls back to the
   internal buffer. With `MYRTUI_CLIPBOARD=osc52` there is no clipboard to read,
   so myrtui only tells you which terminal shortcut to use (macOS `Cmd+V`,
@@ -345,7 +349,7 @@ you can see what was copied.
 | `MYRTUI_COPY_ON_SELECT` | `1` | auto-copy on drag release (`0/false/no/off` disables) |
 | `MYRTUI_CLIPBOARD` | `auto` | copy channels: `auto` = OSC 52 + system command, `osc52` = terminal only, `system` = native clipboard command only |
 | `MYRTUI_CLIPBOARD_PASSTHROUGH` | `1` | forward copies made by programs inside panes (OSC 52) to the terminal / system clipboard (`0/false/no/off` disables) |
-| `MYRTUI_DRAG_SELECT` | `always` | `always` = drag always selects; `app` = forward drag when the program asked for mouse; `smart` = same as `app`, but Shift+drag still selects locally |
+| `MYRTUI_DRAG_SELECT` | `smart` | `smart` = the program gets the drag when it asked for mouse, Shift+drag selects locally; `always` = drag always selects; `app` = forward every drag to the program |
 | `MYRTUI_GRAPHICS` | `auto` | `auto` / `sixel` / `tgp` / `unicode` / `off` (preview bitmaps only) |
 | `MYRTUI_CELL_PX` | — | override cell size in pixels (`10x20`) when the terminal does not report it |
 | `MYRTUI_PAGE_THEME` | `sepia` | `sepia` / `paper` / `gray` / `white` / `dim` / `dark` for the LaTeX page view |

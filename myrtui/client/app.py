@@ -243,16 +243,19 @@ def resolve_copy_on_select(raw: str | None) -> bool:
 def resolve_drag_select(raw: str | None) -> str:
     """解析 ``MYRTUI_DRAG_SELECT``（v0.35 / 0.7.0）→ 三档模式。
 
-    - 未设 / 空串 / 非法值 → ``"always"``（默认：拖拽永远选字）；
-    - ``app`` → 恢复 v0.34 行为（程序抢鼠标时拖拽转发给程序）；
-    - ``smart``（0.7.0）→ 真终端约定：程序请求了鼠标就把拖动给它，
-      **Shift + 拖动**才是本地选字。AI agent（opencode / opentui 一类）
-      自己实现选区 UI 时，只有这一档能同时保住两边。
+    - 未设 / 空串 / 非法值 → ``"smart"``（0.7.0 起的默认：真终端约定——
+      程序要了鼠标就把拖动给它，Shift + 拖动才是本地选字）；
+    - ``always`` → 恢复 v0.35 的取舍（拖拽永远选字）；
+    - ``app`` → 恢复 v0.34 行为（程序抢鼠标时拖拽转发给程序，没有 Shift 逃生口）。
+
+    为什么把默认从 ``always`` 改成 ``smart``：AI agent（opencode / opentui 一类）
+    自己实现了选区与"选择即复制"，而 ``always`` 会把拖动整个收走，它的选区 UI
+    永远收不到事件——0.7.0 用户报的就是这个。``smart`` 同时保住两边。
     """
     if raw is None:
-        return "always"
+        return "smart"
     value = raw.strip().lower()
-    return value if value in ("always", "app", "smart") else "always"
+    return value if value in ("always", "app", "smart") else "smart"
 
 
 def map_key(key: str, character: str | None = None) -> tuple[str, str] | None:

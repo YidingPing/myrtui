@@ -106,7 +106,7 @@ window/pane 创建时快照选项，`Ctrl-a r` 重开的也是建窗时记录的
 | `MYRTUI_LOOP_DEBUG` | `=1` 时把事件循环迟到 > 30ms 的事件写到 stderr（性能遥测，排障/验收用，默认关闭、无行为影响）。 |
 | `MYRTUI_MOUSE_DEBUG` | `=1` 时把每个鼠标事件与拖拽结论写进 `<tmp>/myrtui-mouse-debug-<pid>.log`（排障用，默认关闭）。 |
 | `MYRTUI_COPY_ON_SELECT` | 左键拖拽松手后是否**自动复制**（默认 `1`；`0/false/no/off` 关闭）。关闭后选区保持高亮 10s，按 `Ctrl-a c` 复制，其他键 / 点击 / 滚轮取消。 |
-| `MYRTUI_DRAG_SELECT` | `always`（默认）= 左键拖拽**永远**由 myrtui 选字；`app` = 恢复 v0.34 行为（pane 内程序请求了鼠标时，拖拽原样转给程序，如 vim `mouse=a` 的拖动可视选择、`ov` 自己的拖选）；`smart` = 同 `app`，但 **Shift + 拖动**仍是 myrtui 选字（真终端的约定，agent 自己的选区 UI 与本地选字可同时用）。 |
+| `MYRTUI_DRAG_SELECT` | `smart`（默认）= 真终端约定：pane 内程序请求了鼠标就把拖动转给它（vim `mouse=a`、`ov` 拖选、opencode 选择即复制），**Shift + 拖动**才由 myrtui 选字；`always` = 左键拖拽**永远**由 myrtui 选字（v0.35 行为）；`app` = 只要程序请求了鼠标就转给它，没有 Shift 逃生口。 |
 | `MYRTUI_CLIPBOARD` | 复制通道：`auto`（默认，OSC 52 + 系统命令都发）/ `osc52`（只发 OSC 52）/ `system`（只调系统命令）。非法值告警后按 `auto`。 |
 | `MYRTUI_CLIPBOARD_PASSTHROUGH` | 是否把 **pane 内程序发起的复制**（OSC 52）转发到终端 / 系统剪贴板（默认开；`0/false/no/off` 关闭）。 |
 | `MYRTUI_GRAPHICS` | 预览位图协议：`auto`（默认，启动时探测终端）/ `sixel` / `tgp` 强制 / `unicode` / `off` 关闭。缺 `textual-image`、非 tty、探测失败都等同 `unicode`；非法值告警后回落 `auto`。只影响图片与 LaTeX 整篇版面。 |
@@ -195,10 +195,13 @@ pane 内 shell 退出后该 pane 标灰、顶栏标 `N:dead` 并提示 `Ctrl-a r
 字节一致；**shift+滚轮**随时强制翻 scrollback（逃生舱，mouse-on 程序不会吃掉历史入口）。
 单击在**松手时**才到达程序（延迟 = 按住时长，典型 50–150ms），换取「拖拽永远选字」。
 
-**选字与复制（v0.35）**：**左键拖拽永远由 myrtui 选字**——不管 pane 内程序有没有
-请求鼠标（opencode / vim / ov 全部适用）。**松手即自动复制**（OSC 52 + 系统命令），
-选区高亮保留 600ms 让你看清复制了什么。拖拽期间冻结该 pane 的画面，选区不会随
-capture 刷新漂移。
+**选字与复制（v0.35；0.7.0 改默认）**：拖拽的归属按**真终端约定**
+（`MYRTUI_DRAG_SELECT=smart`，默认）——pane 内程序请求了鼠标（vim / htop /
+opencode）时，拖动**转给程序**：它自己的选区 UI 能用，它复制的内容也会被转发
+回来（见下）；**Shift + 拖动**才是 myrtui 选字。程序没要鼠标时拖动归 myrtui：
+**松手即自动复制**（OSC 52 + 系统命令），选区高亮保留 600ms 让你看清复制了什么。
+拖拽期间冻结该 pane 的画面，选区不会随 capture 刷新漂移。想要回 v0.35 的
+「永远选字」设 `MYRTUI_DRAG_SELECT=always`。
 
 - 复制内容：行尾补白裁掉、中文 / 宽字符按 cell 对齐、只取**按下时那个 pane** 的
   内容（拖到侧栏 / 另一个 pane 也只复制按下 pane 覆盖的部分）；
@@ -214,13 +217,12 @@ capture 刷新漂移。
   「已从 pane k 复制 N 字符」。`MYRTUI_CLIPBOARD_PASSTHROUGH=0` 可关闭；
 - 自动复制不想要？`MYRTUI_COPY_ON_SELECT=0`：松手保持高亮 10s，按 `Ctrl-a c`
   复制，其他键 / 点击 / 滚轮取消；
-- **迁移注意（vim / 文件管理器用户）**：默认 `always` 会**收走程序的左键拖拽**——
-  vim `mouse=a` 的拖动可视选择、`ov` 自己的拖选都改为 myrtui 选字。需要拿回程序
-  拖拽时设 `MYRTUI_DRAG_SELECT=app`（单击 / 滚轮 / 右键 / 中键的转发不受影响）；
-  想要两边都要（程序拿普通拖动，Shift+拖动才本地选字）用
-  `MYRTUI_DRAG_SELECT=smart`——真终端的约定就是这一档。**opencode 自己的
-  拖拽选区/复制必须用 `smart` 或 `app`**（默认的 `always` 会把拖动收走，
-  它根本收不到事件）。转发期间 myrtui 不再点亮自己的选区，不会出现两套高亮。
+- **迁移注意（v0.35 → 0.7.0）**：默认从 `always` 改成 `smart`——vim `mouse=a`
+  的拖动可视选择、`ov` 的拖选、opencode 的「选择即复制」现在**开箱即用**；
+  代价是这些程序里本地选字要按 **Shift**。想要回旧手感设
+  `MYRTUI_DRAG_SELECT=always`；`app` 则连 Shift 逃生口也不要（拖动永远给程序）。
+  单击 / 滚轮 / 右键 / 中键的转发三档都不受影响；转发期间 myrtui 不再点亮自己的
+  选区，不会出现两套高亮。
 
 **粘贴（v0.14；v0.35 改优先级）**：`Ctrl-a v` 把文本送进当前活动 pane。
 

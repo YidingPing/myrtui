@@ -702,13 +702,19 @@ def test_press_outside_pane_no_orphan_release(backend, app_root):
 
 # ---------- 编码维度（v0.7.1 审阅 F3：sgr=0 必须发旧编码） ----------
 
-def test_click_uses_old_encoding_without_1006(backend, app_root):
+def test_click_uses_old_encoding_without_1006(backend, app_root, monkeypatch):
     """F3 回归：请求 1000 但无 1006（sgr=0）→ 注入 xterm 旧 3 字节，绝无 SGR。
 
     这正是审阅实证的 vim 默认形态——恒发 SGR 会让 vim 把 x 当行号、落点错行。
     期望字节（tmux oracle 实证）：press = ESC[M + chr(32+0) + chr(33+5) +
     chr(33+2)；release = ESC[M + chr(35) + 同坐标。cat -v 渲染 ESC 为 ^[。
+
+    本用例锚定 v0.35 的「点击在松手时合成」形态，所以显式钉 ``always``；
+    0.7.0 的默认 ``smart`` 会在按下时立即转发 press、松手转发 release
+    （字节与编码完全相同，只是分成两次注入）。
     """
+
+    monkeypatch.setenv("MYRTUI_DRAG_SELECT", "always")
     async def scenario():
         app = TerminalApp(backend, app_root)
         async with app.run_test(size=(100, 30)) as pilot:

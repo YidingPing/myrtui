@@ -108,7 +108,7 @@ the full cheat sheet. Full tables: [docs/USAGE.md](docs/USAGE.md#key-bindings).
 | `MYRTUI_TRANSPORT` | tmux transport: `auto` (default: resident `tmux -C` client, per-call processes as fallback) / `exec` (one process per call) / `control` (force the resident client) |
 | `MYRTUI_LOG` | where warnings go once the TUI owns the terminal (default: the platform log dir, e.g. `~/Library/Logs/myrtui/myrtui.log`); empty disables it |
 | `MYRTUI_COPY_ON_SELECT` | auto-copy on drag release (default `1`; `0` keeps the selection for `Ctrl-a c`) |
-| `MYRTUI_DRAG_SELECT` | `always` (default) = drag always selects; `app` = when the pane program requested mouse, drag is forwarded to it; `smart` = same, but Shift+drag still selects locally |
+| `MYRTUI_DRAG_SELECT` | `smart` (default) = the program gets the drag when it asked for mouse (its own selection UI works), Shift+drag selects locally; `always` = drag always selects; `app` = forward every drag to the program |
 | `MYRTUI_CLIPBOARD` | copy channels: `auto` (default: OSC 52 + native clipboard command) / `osc52` / `system` |
 | `MYRTUI_CLIPBOARD_PASSTHROUGH` | forward copies made by programs inside panes (opencode's select-to-copy, `vim "+y`) to your clipboard (default on; `0` disables) |
 | `MYRTUI_GRAPHICS` | bitmap protocol: `auto` (default) / `sixel` / `tgp` / `unicode` / `off` |
@@ -124,9 +124,10 @@ the full cheat sheet. Full tables: [docs/USAGE.md](docs/USAGE.md#key-bindings).
 ## Limitations
 
 - **macOS / Linux only** — Windows has no native tmux and `cli.py` needs `fcntl`.
-- **Clicks inside panes are delayed by 50–150 ms** — dragging always belongs to
-  selection, so a click is injected on release (use `MYRTUI_DRAG_SELECT=app` to
-  give drag back to the program).
+- **Clicks inside panes are delayed by 50–150 ms** — when the drag belongs to
+  myrtui (the program did not ask for mouse, or `MYRTUI_DRAG_SELECT=always`), a
+  click is injected on release so a drag can always become a selection. Programs
+  that requested mouse get the press immediately.
 - **No bitmap inside panes** — images render in the preview layer only.
 - **Soft-wrapped lines copy with extra newlines** (capture works line by line).
 - **A pane program's copy only reaches you through myrtui** — the OSC 52 it emits is

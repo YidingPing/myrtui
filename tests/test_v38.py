@@ -421,7 +421,28 @@ def test_channel_helpers():
 def test_resolve_drag_select_smart():
     assert resolve_drag_select("smart") == "smart"
     assert resolve_drag_select("SMART") == "smart"
-    assert resolve_drag_select("nonsense") == "always"
+    assert resolve_drag_select(None) == "smart"  # 0.7.0 的默认
+    assert resolve_drag_select("always") == "always"
+    assert resolve_drag_select("nonsense") == "smart"
+
+
+def test_default_mode_is_smart_for_mouse_panes(copied, app_root):
+    """不设任何环境变量：程序要了鼠标 → 拖动直接归程序（0.7.0 的默认）。"""
+
+    async def scenario():
+        backend = _FakeBackend(1, mouse={0: MOUSE_1003})
+        app = TerminalApp(backend, app_root)
+        assert app._drag_select_mode == "smart"
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.3)
+            pane = app.query_one("#pane-0", PaneWidget)
+            await pilot.mouse_down(pane, offset=(1, 1))
+            await pilot.mouse_up(pane, offset=(6, 1))
+            await pilot.pause(0.1)
+            assert [item for item in backend.sent if item[0] == "mouse"]
+            assert copied == []
+
+    asyncio.run(scenario())
 
 
 def test_smart_drag_forwards_to_app(copied, monkeypatch, app_root):

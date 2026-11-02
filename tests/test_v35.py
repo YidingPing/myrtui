@@ -37,6 +37,17 @@ TWO_PANE_TEXT = "ab\ncd\n"
 MOUSE_1003 = (False, False, True, True)
 
 
+@pytest.fixture(autouse=True)
+def _pin_drag_select_always(monkeypatch):
+    """本文件锚定 v0.35 的 ``always`` 路径。
+
+    0.7.0 把默认改成 ``smart``（程序要鼠标时拖动归程序）；这里的用例讲的是
+    「拖拽永远选字」那一档，必须显式钉住，否则语义会随默认值漂移。
+    ``smart`` 自己的用例在 ``tests/test_v38.py``。
+    """
+    monkeypatch.setenv("MYRTUI_DRAG_SELECT", "always")
+
+
 # ---------- 假后端 ----------
 
 
@@ -167,12 +178,14 @@ def test_resolve_copy_on_select(raw, expected):
 @pytest.mark.parametrize(
     "raw,expected",
     [
-        (None, "always"),
-        ("", "always"),
+        # 0.7.0 起默认是 smart（真终端约定）；always 仍可显式选。
+        (None, "smart"),
+        ("", "smart"),
         ("always", "always"),
         ("app", "app"),
         ("APP", "app"),
-        ("garbage", "always"),
+        ("smart", "smart"),
+        ("garbage", "smart"),
     ],
 )
 def test_resolve_drag_select(raw, expected):

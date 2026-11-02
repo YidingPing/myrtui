@@ -139,6 +139,26 @@ def test_allow_select_open_when_program_has_no_mouse(app_root):
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("flags", [(False, True, True, False), (False, False, True, True)])
+def test_allow_select_true_in_smart_mode(flags, app_root):
+    """0.7.0 默认 ``smart``：选区开关**不能**按鼠标级别关掉。
+
+    普通拖动归程序（App 层会清掉 Screen 顺手建的选区），但 Shift+拖动仍要
+    能起本地选区，而 Screen 起选区时拿不到修饰键——所以这里恒 True。
+    """
+
+    async def scenario():
+        backend = _FakeBackend(1, mouse={0: flags})
+        app = TerminalApp(backend, app_root)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.3)
+            pane = app.query_one("#pane-0", PaneWidget)
+            assert app._drag_select_mode == "smart"
+            assert pane.allow_select is True
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize(
     "flags,level",
     [
@@ -147,8 +167,10 @@ def test_allow_select_open_when_program_has_no_mouse(app_root):
         ((False, False, True, True), LEVEL_ALL),     # 1003（+移动）
     ],
 )
-def test_allow_select_true_in_always_mode(flags, level, app_root):
-    """v0.35 默认 ``always``：程序请求了鼠标，pane 仍允许本地拖拽选字。"""
+def test_allow_select_true_in_always_mode(flags, level, monkeypatch, app_root):
+    """v0.35 的 ``always``：程序请求了鼠标，pane 仍允许本地拖拽选字。"""
+
+    monkeypatch.setenv("MYRTUI_DRAG_SELECT", "always")
 
     async def scenario():
         backend = _FakeBackend(1, mouse={0: flags})
