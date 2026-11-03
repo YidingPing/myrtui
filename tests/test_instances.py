@@ -329,6 +329,89 @@ def test_ls_numbering_only_alive(data_dir, capsys):
         time.sleep(0.2)
 
 
+# ---------- ls 的 dead 行标灰（#list-readability，2026-11-03） ----------
+
+class _Tty:
+    """最小 stdout 替身：``isatty`` 由构造参数决定，收集写入的文本。"""
+
+    def __init__(self, tty: bool) -> None:
+        self._tty = tty
+        self.chunks: list[str] = []
+
+    def write(self, text: str) -> int:
+        self.chunks.append(text)
+        return len(text)
+
+    def flush(self) -> None:
+        pass
+
+    def isatty(self) -> bool:
+        return self._tty
+
+    @property
+    def text(self) -> str:
+        return "".join(self.chunks)
+
+
+def _row_fixture(state: str, index=None) -> dict:
+    """与 ``_row()`` 同形的一行（形状见计划 §3.2 / 评审 M2）。"""
+    return {
+        "index": index,
+        "state": state,
+        "root": f"/p/{state}",
+        "short_hash": f"{state:0<16}"[:16],
+        "pid": 111 if state == "running" else None,
+    }
+
+
+def test_print_table_dims_dead_rows_on_tty(monkeypatch):
+    """tty 上只有 dead 行被 dim 包住；存活行与表头保持裸文本。"""
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("TERM", "xterm-256color")
+    tty = _Tty(True)
+    instances._print_table(
+        [_row_fixture("running", 1), _row_fixture("dead")],
+        stream=tty,
+    )
+    head, live, dead = tty.text.splitlines()
+    assert "\x1b" not in head
+    assert "\x1b" not in live
+    assert dead.startswith("\x1b[2m") and dead.endswith("\x1b[0m")
+    assert "dead" in dead
+
+
+def test_print_table_plain_when_not_tty(monkeypatch):
+    """重定向 / 管道：宁可没有颜色，也不能给下游塞转义序列。"""
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("TERM", "xterm-256color")
+    tty = _Tty(False)
+    instances._print_table([_row_fixture("dead")], stream=tty)
+    assert "\x1b" not in tty.text
+
+
+def test_print_table_respects_no_color_and_dumb_term(monkeypatch):
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.setenv("NO_COLOR", "1")
+    tty = _Tty(True)
+    instances._print_table([_row_fixture("dead")], stream=tty)
+    assert "\x1b" not in tty.text
+
+    monkeypatch.delenv("NO_COLOR")
+    monkeypatch.setenv("TERM", "dumb")
+    tty = _Tty(True)
+    instances._print_table([_row_fixture("dead")], stream=tty)
+    assert "\x1b" not in tty.text
+
+
+def test_ls_all_output_has_no_escapes_when_piped(data_dir, capsys):
+    """``myrtui ls --all | grep`` 的契约：管道输出逐字干净（capsys 非 tty）。"""
+    _make_lock("dead000000000000", 111, "/gone")
+    assert instances.cmd_ls(["--all"]) == 0
+    out = capsys.readouterr().out
+    assert "dead000000000000" in out
+    assert "\x1b" not in out
+
+
 # ---------- 目标解析（评审 R1/M1） ----------
 
 def _two_alive(data_dir, tmp_path):

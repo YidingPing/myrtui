@@ -189,13 +189,40 @@ def _row(index: int | None, inst: Instance) -> dict:
     }
 
 
-def _print_table(rows: list[dict]) -> None:
-    print(f"{'#':>3}  {'STATE':<8} {'PID':>7}  PROJECT-ROOT  HASH")
+def _dim_enabled(stream) -> bool:
+    """``ls --all`` 的 dead 行标灰：只在真 tty 上开（2026-11-03）。
+
+    管道 / 重定向 / 测试快照都要求逐字干净，`NO_COLOR` 与 `TERM=dumb` 是
+    「我不要转义序列」的标准表达；两者任一命中就不上色。任何 isatty 异常按
+    不开处理——上色是装饰，不值得为一个悬空的 stdout 抛错。
+    """
+    if os.environ.get("NO_COLOR") or os.environ.get("TERM") == "dumb":
+        return False
+    try:
+        return bool(stream.isatty())
+    except Exception:  # noqa: BLE001 —— 见上：装饰性功能，不抛
+        return False
+
+
+def _print_table(rows: list[dict], stream=None) -> None:
+    """打印实例表（``stream`` 只为测试注入，默认 stdout）。
+
+    dead 行整行 dim：``--all`` 把 DEAD 和 DETACHED 排在一起时，状态列之外没有
+    任何视觉区分，扫一眼很难判断哪几行其实是残留锁（v0.37 的候选
+    `#list-readability`）。序号列本来就不给 dead 行编号，颜色只是把这层区别
+    做得更明显。
+    """
+    out = stream if stream is not None else sys.stdout
+    dim = _dim_enabled(out)
+    print(f"{'#':>3}  {'STATE':<8} {'PID':>7}  PROJECT-ROOT  HASH", file=out)
     for r in rows:
         idx = str(r["index"]) if r["index"] is not None else "-"
         pid = str(r["pid"]) if r["pid"] is not None else "-"
         root = r["root"] or t("inst.old_record")
-        print(f"{idx:>3}  {r['state']:<8} {pid:>7}  {root}  {r['short_hash']}")
+        line = f"{idx:>3}  {r['state']:<8} {pid:>7}  {root}  {r['short_hash']}"
+        if dim and r["state"] == STATE_DEAD:
+            line = f"\x1b[2m{line}\x1b[0m"
+        print(line, file=out)
 
 
 def _alive_rows(alive: list[Instance]) -> list[dict]:
