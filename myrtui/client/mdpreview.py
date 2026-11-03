@@ -5,7 +5,8 @@
 - **全屏 ``ModalScreen``**：不占 pane、不改 tmux 后端；打开期间复用
   ``TerminalApp.on_key`` 首行的 ``MainScreen`` 闸门，键不会泄进内层 shell；
 - **只读渲染**：Textual ``Markdown`` + GFM；链接点击拦截（不导航）；
-  不提供源码视图 / 搜索 / 编辑 / 复制 / PDF 导出；
+  不提供源码视图 / 搜索 / 编辑 / 复制；``p`` 导出 A4 PDF（``client/pdfexport.py``，
+  与 ``v`` 屏共用 ``docpage`` 的正文管线）；
 - **数学**：``\\$...\\$`` / ``\\$\\$...\\$\\$`` 由 dollarmath token 接管；行内走
   ``termtex -inline`` 的 Unicode 文本，块级优先 LaTeX 位图（有 Sixel/TGP 且
   渲染成功），否则 ``termtex -width`` 的二维字符排版，再退 LaTeX 原文；
@@ -40,7 +41,7 @@ from textual.widgets import Markdown, Static
 
 from myrtui import fileview
 from myrtui.client import graphics as graphics_mod
-from myrtui.client import imageprep, mathrender
+from myrtui.client import imageprep, mathrender, pdfexport
 from myrtui.client.overlay import QuietWhenCovered
 from myrtui.client.mathtext import (
     inline_math_tokens,
@@ -375,6 +376,7 @@ class MarkdownPreviewScreen(QuietWhenCovered, ModalScreen[None], inherit_binding
         Binding("q", "close", show=False),
         Binding("r", "reload", show=False),
         Binding("v", "paged", show=False),
+        Binding("p", "export_pdf", show=False),
     ]
 
     CSS = """
@@ -746,6 +748,35 @@ class MarkdownPreviewScreen(QuietWhenCovered, ModalScreen[None], inherit_binding
                 relative=self._relative,
             )
         )
+
+    def action_export_pdf(self) -> None:
+        """``p``：整篇 → A4 PDF，落在**源文件同目录**（白底黑字、无页码）。
+
+        Chrome 冷启动 1–2 s，文档长一点更久，所以打印必须进 worker——在事件
+        循环上做等于把整个预览层冻住。成功与失败都只走 footer：导出是「拿走一份
+        文件」，不需要第二个界面。旧文件由 ``export_pdf`` 用 ``os.replace`` 保护。
+        """
+        if not self._text.strip():
+            self._notice(t("md.not_ready"))
+            return
+        self._set_footer(t("md.export_running"))
+        self.run_worker(
+            self._export_pdf(),
+            group="mdpreview-export",
+            exclusive=True,
+            exit_on_error=False,
+        )
+
+    async def _export_pdf(self) -> None:
+        result = await asyncio.to_thread(
+            pdfexport.export_pdf, self._text, self._absolute
+        )
+        if not self._alive():
+            return
+        if result.ok:
+            self._notice(t("md.export_ok", path=str(result.path)), seconds=8.0)
+        else:
+            self._notice(t("md.export_failed", exc=result.error), seconds=8.0)
 
     def on_markdown_link_clicked(self, event: Markdown.LinkClicked) -> None:
         """链接不导航（F1：textual 8.2.8 沿 MRO 分发，必须 prevent_default）。"""

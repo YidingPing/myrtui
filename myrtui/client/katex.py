@@ -181,8 +181,18 @@ def print_pdf(
     *,
     profile_dir: Path,
     timeout: float = 30.0,
+    virtual_time_budget: float | None = None,
+    runner=None,
 ) -> Path:
-    """Chrome headless 打印 PDF（无网络、无头、无页眉页脚）。"""
+    """Chrome headless 打印 PDF（无网络、无头、无页眉页脚）。
+
+    ``virtual_time_budget``（秒）：给页内的 JS（KaTeX auto-render）留出时间再
+    截断。默认 ``None`` = **不传这个 flag**，``v`` 屏的既有行为逐字不变；导出
+    整篇时传 3 s，否则长文里的公式可能没排完就被打印。
+
+    ``runner`` 只为测试注入（与 ``subprocess.run`` 同签名）；生产路径始终是
+    真子进程。
+    """
     pdf_path.parent.mkdir(parents=True, exist_ok=True)
     profile_dir.mkdir(parents=True, exist_ok=True)
     command = [
@@ -199,9 +209,12 @@ def print_pdf(
         "--metrics-recording-only",
         f"--user-data-dir={profile_dir}",
         f"--print-to-pdf={pdf_path}",
-        html_path.resolve().as_uri(),
     ]
-    completed = subprocess.run(  # noqa: S603 —— 固定可执行 + 本地文件
+    if virtual_time_budget is not None:
+        command.append(f"--virtual-time-budget={int(virtual_time_budget * 1000)}")
+    command.append(html_path.resolve().as_uri())
+    run = subprocess.run if runner is None else runner
+    completed = run(  # noqa: S603 —— 固定可执行 + 本地文件
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

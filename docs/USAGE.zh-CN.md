@@ -350,6 +350,7 @@ S="$HOME/Library/Application Support/UURemote/tmux.sock"
 | `Esc` / `q` | 关闭预览，焦点回文件树 |
 | `r` | 重新读盘 + 重新渲染（尽量保留滚动位置） |
 | `v` | **LaTeX 排版**：整篇交给浏览器排版（KaTeX PDF 分页位图，见下） |
+| `p` | **导出 A4 PDF**：整篇排成白底黑字的矢量 PDF，落在源文件同目录（见下） |
 | `↑` / `↓` / `PgUp` / `PgDn` / `Home` / `End` | 滚动 |
 | 鼠标滚轮 | 滚动 |
 
@@ -406,6 +407,25 @@ S="$HOME/Library/Application Support/UURemote/tmux.sock"
 | `↑` / `↓` / `PgUp` / `PgDn` / `Home` / `End` | **翻页**（`↑`/`↓` 也是一整页；header 显示 `2/9 页`） |
 | 鼠标滚轮 | 翻页（带 ~120 ms 冷却，触控板惯性别连翻） |
 | `r` | 丢掉缓存重渲染 |
+
+#### 导出 A4 PDF（`p`）
+
+按 `p`：整篇走**同一条** md → HTML 管线（公式判定、`\label`→`\tag`、图片内联
+与预览完全一致），但打印到 **A4 纸**、**白底黑字**——拿到的是矢量 PDF（字可选中、
+打印不虚），不是位图。适合发出去或打印。
+
+- **落点**：源文件**同目录**的 `<stem>.pdf`（`README.md` → `README.pdf`）；
+  先写临时文件，Chrome 成功后才 `os.replace` 覆盖，所以导出失败**不会**留下
+  半截 PDF，也不会毁掉上一份好的；
+- **不联网**：本地图片内联进 HTML，`http(s)` 图片直接丢掉；KaTeX 资产是仓库
+  自带的；
+- **长代码行换行**而不是被裁右半边；代码块 / 表头底色会真的打印出来
+  （`print-color-adjust: exact`）；表格跨页时表头重复；
+- **没有页码**：Chrome 的 `@page` 不支持页码计数器，做页码要引入 PDF 库，本仓
+  不为这个加运行时依赖；
+- **前提**：Chrome/Chromium（与 `v` 同一个探测，`MYRTUI_CHROME` 可指定）；缺了
+  只在 footer 提示，不影响预览本身；
+- 上限沿用预览的 **512 KiB**，公式再多也在 `--virtual-time-budget` 的 3 s 内排完。
 
 ### 预览图片
 

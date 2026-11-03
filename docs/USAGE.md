@@ -221,6 +221,7 @@ a full-screen read-only screen:
 | `Esc` / `q` | close, focus returns to the tree |
 | `r` | re-read from disk and re-render (scroll position is kept when possible) |
 | `v` | LaTeX typesetting view (KaTeX page bitmaps, see below) |
+| `p` | export the whole document as an **A4 PDF** (see below) |
 | arrows / `PgUp` / `PgDn` / `Home` / `End` / wheel | scroll |
 
 Rendering: GFM headings, paragraphs, lists, tables, quotes, code blocks
@@ -257,6 +258,19 @@ Rendered pages are cached under `<cache>/myrtui/pages/<sha1>/p-001.png…`.
 > such frames per press). That is what made this view flicker and feel sluggish.
 > Snapping to page boundaries keeps exactly one complete page on screen, so the
 > cache always hits; the cost is that there is no half-page transition.
+
+**Export as A4 PDF** (`p`): the whole document runs through the **same**
+md → HTML pipeline as the page view, but prints onto A4 paper with a white
+background and black text — a vector PDF you can send around or print, not a
+bitmap. The file lands **next to the source** (`README.md` → `README.pdf`); an
+existing file is replaced only after Chrome succeeds, so a failed export never
+leaves a half-written PDF behind. Math goes through KaTeX (same delimiters as
+the preview), local images are embedded as data URIs, and remote (`http(s)`)
+images are dropped — export never touches the network. Long code lines wrap
+rather than being clipped. Requires Chrome/Chromium (same as `v`;
+`MYRTUI_CHROME` overrides the binary). There are **no page numbers**: Chrome
+cannot stamp them without an extra PDF library, and this repo does not add
+runtime dependencies for that.
 
 **Preview image** works for `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`,
 `.tif`, `.tiff`, `.ico`, `.avif`:

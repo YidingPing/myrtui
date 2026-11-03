@@ -46,6 +46,7 @@ without interpreting a single cell.
 | `client/sidebar.py` / `file_tree.py` / `git_panel.py` | left column: tree with git colours + commit history with hover details |
 | `client/context_menu.py` | right-click / keyboard menu over the tree (open, preview, copy path) |
 | `client/docpage.py` / `pageview.py` | paged Markdown reader and the LaTeX page view (KaTeX → Chrome → PDF → PNG, page-snapped scrolling) |
+| `client/pdfexport.py` | A4 PDF export (`p` in the Markdown preview): print stylesheet + Chrome print → `<source>.pdf`, atomic replace |
 | `client/overlay.py` | covered screens stop their update timer, so a full-screen bitmap is never re-sent under an overlay |
 | `client/mdpreview.py` / `mathtext.py` / `mathrender.py` / `mathimg.py` / `katex.py` | Markdown rendering, `$math$` handling, `termtex` bridge, KaTeX asset pipeline |
 | `client/imagepreview.py` / `imageprep.py` / `graphics.py` | image preview, decode/resize/compose in workers, Sixel / TGP detection |

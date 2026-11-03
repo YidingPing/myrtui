@@ -523,6 +523,47 @@ def _inline_images(html: str, base_dir: Path | None) -> str:
     return _IMG_TAG.sub(replace, html)
 
 
+def render_body(text: str, *, base_dir: Path | None = None) -> str:
+    """md → HTML 正文（公式保留 KaTeX delimiter，本地图片内联，脚本/外链剥掉）。
+
+    **预览与导出唯一的一条正文管线**：``build_document_html``（``v`` 屏）与
+    ``pdfexport``（A4 导出）都从这里出正文，所以两边看到的是同一批公式、同一批
+    图片。别在别处重写 token 流——口径一漂就会出现「预览是公式、导出是源码」。
+    """
+    parser = math_parser_factory()
+    tokens = _math_tokens(text)
+    body = parser.renderer.render(tokens, parser.options, {})
+    body = sanitize_body(body)
+    return _inline_images(body, base_dir)
+
+
+def katex_stylesheet() -> str:
+    """KaTeX 的 ``<link>``：本地 vendor 资产，零 CDN、零网络。"""
+    return f'<link rel="stylesheet" href="{katex.KATEX_CSS.resolve().as_uri()}">'
+
+
+def katex_scripts() -> str:
+    """KaTeX 三件套 + delimiter 配置：**预览与导出共用同一份**。
+
+    两处各写一遍的话，`$x$` / `\\(x\\)` 的判定迟早漂开——一边认、一边不认，
+    而用户看到的是「同一篇文档，预览有公式、导出的 PDF 没有」。
+    """
+    js_url = katex.KATEX_JS.resolve().as_uri()
+    auto_url = (katex.ASSET_DIR / "auto-render.min.js").resolve().as_uri()
+    return f"""<script src="{js_url}"></script>
+<script src="{auto_url}"></script>
+<script>
+renderMathInElement(document.body, {{
+  delimiters: [
+    {{left: '\\\\[', right: '\\\\]', display: true}},
+    {{left: '\\\\(', right: '\\\\)', display: false}}
+  ],
+  throwOnError: false,
+  strict: 'ignore'
+}});
+</script>"""
+
+
 def build_document_html(
     text: str,
     *,
@@ -542,20 +583,13 @@ def build_document_html(
     pre_bg = chosen.pre_background
     th_bg = chosen.table_head_background
     link = chosen.link
-    parser = math_parser_factory()
-    tokens = _math_tokens(text)
-    body = parser.renderer.render(tokens, parser.options, {})
-    body = sanitize_body(body)
-    body = _inline_images(body, base_dir)
+    body = render_body(text, base_dir=base_dir)
 
-    css_url = katex.KATEX_CSS.resolve().as_uri()
-    js_url = katex.KATEX_JS.resolve().as_uri()
-    auto_url = (katex.ASSET_DIR / "auto-render.min.js").resolve().as_uri()
     line = spec.line_px
     font = spec.font_px
     return f"""<!doctype html>
 <html><head><meta charset="utf-8">
-<link rel="stylesheet" href="{css_url}">
+{katex_stylesheet()}
 <style>
 @page {{ size: {spec.width}px {spec.height}px; margin: {PROFILE_MARGIN}px; }}
 html, body {{ margin: 0; padding: 0; }}
@@ -605,18 +639,7 @@ img {{ max-width: 100%; height: auto; }}
 </style></head>
 <body>
 {body}
-<script src="{js_url}"></script>
-<script src="{auto_url}"></script>
-<script>
-renderMathInElement(document.body, {{
-  delimiters: [
-    {{left: '\\\\[', right: '\\\\]', display: true}},
-    {{left: '\\\\(', right: '\\\\)', display: false}}
-  ],
-  throwOnError: false,
-  strict: 'ignore'
-}});
-</script>
+{katex_scripts()}
 </body></html>
 """
 
