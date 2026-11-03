@@ -388,20 +388,23 @@ def test_one_cell_is_click_two_cells_is_drag(copied, app_root):
     asyncio.run(two_cells())
 
 
-@pytest.mark.parametrize("button", [2, 3])
-def test_right_middle_click_uses_old_path(copied, app_root, button):
-    """右键 / 中键在 1003 pane：照旧注入 press+release，不复制、不留选区。"""
+def test_middle_click_uses_old_path(copied, app_root):
+    """中键在 1003 pane：照旧注入 press+release，不复制、不留选区。
+
+    右键 0.8.0 起不再走这条路：右键 = 粘贴（`Shift+右键` 才转发给程序），
+    用例见 `tests/test_v39.py`。
+    """
 
     async def scenario():
         backend = _FakeBackend(1, mouse={0: MOUSE_1003})
         app = TerminalApp(backend, app_root)
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.3)
-            await pilot.click("#pane-0", offset=(6, 3), button=button)
+            await pilot.click("#pane-0", offset=(6, 3), button=2)
             await pilot.pause(0.3)
             assert _mouse_sent(backend) == [
-                ("p0", press(5, 2, button, True)),
-                ("p0", release(5, 2, button, True)),
+                ("p0", press(5, 2, 2, True)),
+                ("p0", release(5, 2, 2, True)),
             ]
             assert copied == []
             assert not app.screen.selections

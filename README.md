@@ -34,7 +34,7 @@ where you left it.
   the same session with your panes, layout and scrollback intact.
 - **Up to 4 real tmux panes** with mouse support: click to focus, wheel to
   scroll, left-drag splitters to resize (ratios persisted per project),
-  right-click to paste in panes whose program did not ask for the mouse.
+  right-click to paste (Shift+right-click is forwarded to the program).
 - **File tree with git status colours** (VS Code conventions), lazy-loaded,
   context menu for open / preview / copy path.
 - **Git history panel** — repo-wide or per file, hover a commit for details.

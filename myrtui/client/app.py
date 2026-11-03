@@ -2441,12 +2441,17 @@ class TerminalApp(App, inherit_bindings=False):
         pid = widget.pane_id
         level = self._mouse_levels.get(pid, LEVEL_NONE)
         mode = self._drag_select_mode
-        if int(event.button) == 3 and level == LEVEL_NONE:
-            # 0.8.0：终端约定——程序**没**请求鼠标时，右键就是粘贴。
-            # 它填的是「普通 shell 里右键没反应」这个洞：Textual 开着鼠标上报，
-            # 终端（含 UU 远程）按 xterm 约定不再自己处理右键，只能由我们代劳。
-            # 程序请求了鼠标时仍走下面的转发，右键归它（vim / opencode 自己的
-            # 菜单或粘贴行为不能被抢走）。
+        if int(event.button) == 3 and not event.shift:
+            # 0.8.0：右键 = 粘贴（终端约定，Windows Terminal 同款）。
+            #
+            # 为什么要连「请求了鼠标的程序」也抢：Textual 一直开着鼠标上报，
+            # 终端按 xterm 约定就不再自己处理右键，myrtui 是唯一能决定的人。
+            # 真机核对过：opencode 的右键本来什么都不做，vim 的右键扩展选区
+            # 属于小众；而「右键粘贴」是最强的肌肉记忆。
+            #
+            # **Shift + 右键**才把按钮交给程序——与「Shift+拖动 = 本地选字」
+            # 是同一套心智模型（Shift 把控制权抢回来）。下面落到原转发路径：
+            # 程序请求了鼠标就转给它，没请求就什么都不做（不会误粘）。
             self._mouse_down_pane = None
             self._mouse_down_forwarded = False
             self.action_paste()

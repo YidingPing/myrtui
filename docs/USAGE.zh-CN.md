@@ -233,10 +233,10 @@ opencode）时，拖动**转给程序**：它自己的选区 UI 能用，它复�
 - **`MYRTUI_CLIPBOARD=osc52`**：没有可读的剪贴板 → 只提示用终端自己的粘贴快捷键
   （macOS `Cmd+V` / Windows Terminal `Ctrl+V` / Tabby `Ctrl+Shift+V`；拿不到
   `TERM_PROGRAM` 时并列提示），不读系统剪贴板、也不粘内部旧值；
-- **右键粘贴（0.8.0）**：pane 里的程序**没**请求鼠标时（普通 shell、跑着构建
-  的 pane），右键 = 粘贴——与 `Ctrl-a v` 同一条链（系统剪贴板 → 内部缓冲）。
-  这是终端约定，也填了「鼠标上报打开后右键没反应」的洞；请求了鼠标的程序
-  （vim / opencode）仍拿右键（它们自己的菜单/粘贴不能被抢）。
+- **右键粘贴（0.8.0）**：**任何** pane 上右键 = 粘贴——与 `Ctrl-a v` 同一条链
+  （系统剪贴板 → 内部缓冲）。这是终端约定（Windows Terminal 同款），也填了
+  「鼠标上报打开后右键没反应」的洞；**Shift + 右键**才把按钮还给程序，vim /
+  opencode 自己的右键行为（默认都没有）因此保留。
 - 终端原生粘贴（`Cmd+V` / `Ctrl+V` / `Ctrl+Shift+V`，取决于外层终端）始终
   可用，走同一条 tmux `paste-buffer` 通道（程序请求了 bracketed paste 才会包
   bracket）。

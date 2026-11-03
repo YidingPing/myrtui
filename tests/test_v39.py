@@ -213,14 +213,14 @@ def test_right_click_pastes_when_program_has_no_mouse(monkeypatch, app_root):
     asyncio.run(scenario())
 
 
-def test_right_click_forwards_when_program_has_mouse(monkeypatch, app_root):
-    """程序请求了鼠标（vim / opencode）→ 右键归它，不能抢成粘贴。"""
+def test_right_click_pastes_even_when_program_has_mouse(monkeypatch, app_root):
+    """右键 = 粘贴，**不管**程序有没有请求鼠标（0.8.0 的最终口径）。
 
-    monkeypatch.setattr(
-        clipboard,
-        "read_system_clipboard",
-        lambda: pytest.fail("程序要鼠标时不得读剪贴板"),
-    )
+    Textual 一直开着鼠标上报，终端按 xterm 约定不再自己处理右键——myrtui 是
+    唯一能决定的人。真机核对过 opencode 的右键本来什么都不做，所以抢它零损失。
+    """
+
+    monkeypatch.setattr(clipboard, "read_system_clipboard", lambda: "clip")
 
     async def scenario():
         backend = _FakeBackend(1, mouse=MOUSE_1003)
@@ -228,11 +228,57 @@ def test_right_click_forwards_when_program_has_mouse(monkeypatch, app_root):
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause(0.3)
             await pilot.mouse_down("#pane-0", offset=(3, 2), button=3)
+            await pilot.pause(0.4)
+            await pilot.mouse_up("#pane-0", offset=(3, 2))
+            await pilot.pause(0.2)
+            assert backend.pasted == [("p0", "clip")]
+            assert not [item for item in backend.sent if item[0] == "mouse"]
+
+    asyncio.run(scenario())
+
+
+def test_shift_right_click_goes_to_the_program(monkeypatch, app_root):
+    """Shift + 右键：把右键还给程序（vim / opencode 自己的行为）。"""
+
+    monkeypatch.setattr(
+        clipboard,
+        "read_system_clipboard",
+        lambda: pytest.fail("Shift+右键不得读剪贴板"),
+    )
+
+    async def scenario():
+        backend = _FakeBackend(1, mouse=MOUSE_1003)
+        app = TerminalApp(backend, app_root)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.3)
+            await pilot.mouse_down("#pane-0", offset=(3, 2), button=3, shift=True)
             await pilot.pause(0.2)
             await pilot.mouse_up("#pane-0", offset=(3, 2))
             await pilot.pause(0.2)
             assert backend.pasted == []
             assert [item for item in backend.sent if item[0] == "mouse"]
+
+    asyncio.run(scenario())
+
+
+def test_shift_right_click_without_mouse_does_nothing(monkeypatch, app_root):
+    """Shift + 右键在「没请求鼠标」的 pane 上：既不粘也不转发（别制造误粘贴）。"""
+
+    monkeypatch.setattr(
+        clipboard,
+        "read_system_clipboard",
+        lambda: pytest.fail("Shift+右键不得读剪贴板"),
+    )
+
+    async def scenario():
+        backend = _FakeBackend(1)
+        app = TerminalApp(backend, app_root)
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.3)
+            await pilot.mouse_down("#pane-0", offset=(3, 2), button=3, shift=True)
+            await pilot.pause(0.3)
+            assert backend.pasted == []
+            assert not [item for item in backend.sent if item[0] == "mouse"]
 
     asyncio.run(scenario())
 

@@ -333,10 +333,10 @@ what was copied. `MYRTUI_DRAG_SELECT=always` takes every drag back (v0.35).
   asked for mouse, without a Shift escape hatch. Clicks, wheel and right/middle
   click keep working in all three modes, and myrtui stops its own highlight
   while a drag is forwarded, so you never see two selections at once.
-- **Right-click pastes** on panes whose program did not ask for mouse (a plain
-  shell, a running build): the terminal convention, and the only way to paste
-  there once mouse reporting is on. Programs that did ask for mouse (vim,
-  opencode) keep the right button for themselves.
+- **Right-click pastes**, always — the terminal convention (Windows Terminal
+  does the same), and the only way to paste at all once mouse reporting is on.
+  **Shift+right-click** hands the button back to the program, so `vim` and
+  `opencode` keep whatever they do with it (none of them use it by default).
 - Pasting (`Ctrl-a v`) prefers the system clipboard and falls back to the
   internal buffer. With `MYRTUI_CLIPBOARD=osc52` there is no clipboard to read,
   so myrtui only tells you which terminal shortcut to use (macOS `Cmd+V`,
