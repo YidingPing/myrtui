@@ -275,7 +275,8 @@ the theme background — terminals do not blend alpha). Limits: ≤ 10 MB,
 ≤ 4000×4000, first frame only for animated GIFs, no SVG. Without Sixel/Kitty
 support you still get the metadata and a hint. When running inside an outer
 tmux, Sixel needs `set -ga terminal-features ',*:sixel'` (and usually
-`set -g allow-passthrough on`).
+`set -g allow-passthrough on`). Which terminals have been measured is in the
+README under [Terminal support](../README.md#terminal-support).
 
 ## Splitters
 

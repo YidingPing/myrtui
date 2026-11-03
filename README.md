@@ -44,6 +44,34 @@ where you left it.
 - **Selection and clipboard** that actually work inside a TUI: drag to select,
   release to copy (OSC 52 + native clipboard commands).
 
+## Terminal support
+
+Bitmaps — the image preview and the `v` page view — need a terminal that speaks
+**Sixel** or the **Kitty graphics protocol**. Everything else (panes, tree, git
+log, Markdown, math) is plain cells and works anywhere.
+
+| Terminal | Bitmap protocol | Status |
+|---|---|---|
+| Tabby | Sixel | ✅ measured (macOS) |
+
+Only measured rows are listed: a terminal missing from this table is
+**untested**, not unsupported. Without a bitmap protocol the previews show
+metadata and a hint instead of an image; nothing breaks and no pane is affected.
+Inside an outer tmux, Sixel additionally needs
+`set -ga terminal-features ',*:sixel'` — see
+[Inside another tmux](docs/USAGE.md#inside-another-tmux-uu-remote-a-local-mirror).
+
+### Going mobile
+
+What a phone or tablet terminal costs you is the **bitmaps**, not the preview:
+
+| Capability | Needs | On a terminal without bitmaps |
+|---|---|---|
+| Markdown body | nothing (Textual draws cells) | ✅ |
+| Inline / block math | `termtex` (optional) | ✅ LaTeX source when it is missing |
+| Image preview | Sixel / TGP | ❌ metadata and a hint |
+| `v` page view | Chrome + `pdftocairo` + bitmaps | ❌ |
+
 ## Install
 
 Requires `tmux >= 3.1` and Python `>= 3.10` (macOS and Linux; Windows is not
