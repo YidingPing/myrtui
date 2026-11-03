@@ -1,0 +1,103 @@
+# myrtui install smoke（GitHub Actions 专属）：每周验一次「已发布」的安装路径
+#
+# 为什么只在 GitHub：Gitea 读 `.gitea/`，这个文件在那边根本不会加载；而这一格
+# 验的是 PyPI + raw.githubusercontent 上的**公开安装链**，只有 GitHub 有。
+#
+# 为什么只挂 `schedule` + `workflow_dispatch`，不挂 `push`：它验的不是这次提交，
+# 而是「PyPI 上那个版本今天还装得上吗」。挂 push 只会在改代码时制造与改动无关的
+# 红绿——红的往往是上游（PyPI / 探测/ 网络），绿也不代表这次提交没问题。
+#
+# 三个断言（都**不看 `$?`**：`curl … | sh` 永远返回 0，管道里那个退出码没有意义）：
+#   1. 二进制存在，且 `--version` == PyPI JSON 里的 latest。脚本是 curl 下来的、
+#      不是 checkout 的 → 顺带证明 main 上的 install.sh 没漂移；
+#   2. `MYRTUI_LANG=zh_CN --help` 出中文（独占 Linux 的 locale 面）；
+#   3. 日志是 `installed (uv):`——uv 通道本机永远测不到（维护者的机器没装 uv），
+#      而它是首装默认走的第一条通道。
+#
+# 刻意不验的两格，别当成漏了：
+#   - **venv / pipx 兜底**：要有意把 uv 藏掉才走得到，而藏掉之后验的还是同一批
+#     pip 动作，收益不足以抵一次额外的周任务；
+#   - **Python 3.10 解释器**：install.sh 按 3.14→3.10 顺序探测、取 PATH 上最高的
+#     那个，在 runner 上钉不住（系统 python3.12 永远在）。3.10 的 import 面由
+#     release.yml 的 `verify-py310` 在每次发版时覆盖。
+#
+# 自检：把「版本比对」那步的 `want` 换成假值，手动 dispatch 一次应当变红。
+name: install-smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1" # 每周一 06:00 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: install (linux, uv)
+    if: github.server_url == 'https://github.com'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # action 一律按 commit SHA 固定（同 release.yml）：这里虽然只读，但不给
+      # 上游一个「移动 tag 就换掉我跑的东西」的机会。升级时 SHA 与注释同改。
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+
+      # 用 pip 装 uv 而不是 `curl astral.sh/uv/install.sh | sh`：后者是一个没有
+      # 版本也没有校验和的远程脚本，和本仓「第三方动作按 SHA 固定」的取向冲突。
+      - name: Install uv (so install.sh takes the uv channel)
+        run: |
+          set -eux
+          python -m pip install --quiet --upgrade uv
+          command -v uv
+          uv --version
+
+      # MYRTUI_DEPS=no：连 tmux 都不装。这一格验的是「装包 + 能启动」，
+      # 装依赖会引入与安装链无关的失败源（apt 网络、brew 慢）。
+      - name: Run the published installer
+        env:
+          MYRTUI_DEPS: "no"
+        run: |
+          set -eux
+          curl -fsSL \
+            "https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/install.sh" \
+            | sh 2>&1 | tee "$RUNNER_TEMP/install.log"
+
+      - name: Assert the binary, the uv channel and the version
+        run: |
+          set -eux
+          bindir="$HOME/.local/bin"
+          test -x "$bindir/myrtui"
+          grep -q 'installed (uv):' "$RUNNER_TEMP/install.log"
+
+          got=$("$bindir/myrtui" --version | awk '{print $2}')
+          echo "installed=${got}"
+          # PyPI 的 JSON API 与 pip 的索引缓存是两条路：刚发版时可能短暂不一致，
+          # 所以给一分钟的重试窗口，别让一条周任务因为 CDN 没收敛就变红。
+          want=""
+          for attempt in 1 2 3 4 5 6; do
+            want=$(python -c 'import json,urllib.request as u; print(json.load(u.urlopen("https://pypi.org/pypi/myrtui/json"))["info"]["version"])')
+            echo "pypi=${want} (attempt ${attempt})"
+            if [ "${got}" = "${want}" ]; then
+              break
+            fi
+            sleep 10
+          done
+          [ "${got}" = "${want}" ]
+
+      - name: Assert Chinese help output
+        run: |
+          set -eux
+          MYRTUI_LANG=zh_CN "$HOME/.local/bin/myrtui" --help \
+            | tee "$RUNNER_TEMP/help.txt"
+          grep -q '轻量终端复用器' "$RUNNER_TEMP/help.txt"
+
+      - name: Upload the installer log
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: install-log
+          path: ${{ runner.temp }}/install.log
+          if-no-files-found: ignore
