@@ -216,6 +216,7 @@ opencode）时，拖动**转给程序**：它自己的选区 UI 能用，它复�
   塞进 paste buffer（裸形态）、要么直接丢弃（`$TMUX` 下的 `ESC Ptmux;` 形态）。
   myrtui 从控制通道里把它捡出来，转发给终端与系统剪贴板，并在顶栏提示
   「已从 pane k 复制 N 字符」。`MYRTUI_CLIPBOARD_PASSTHROUGH=0` 可关闭；
+  单次转发的上限是 **256 KiB**（解码后），超出只写日志、不提示；
 - 自动复制不想要？`MYRTUI_COPY_ON_SELECT=0`：松手保持高亮 10s，按 `Ctrl-a c`
   复制，其他键 / 点击 / 滚轮取消；
 - **迁移注意（v0.35 → 0.7.0）**：默认从 `always` 改成 `smart`——vim `mouse=a`

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import shlex
 import shutil
 import time
 import uuid
@@ -108,6 +109,103 @@ def test_extract_plain_output_is_free():
     assert osc52.extract(r"line\r\n" * 100) == []
 
 
+# ---------------------------------------------------------------- 解析：跨帧重组
+#
+# 0.9.1 的真机 bug：tmux 的 ``%output`` 一帧只有约 1 KiB（实测 tmux 3.8 /
+# macOS：1024 输入字节），长复制被切成几帧后按帧解析一条都取不到 → 剪贴板
+# 完全不变。下面的帧边界都是合成的，不依赖平台的读块大小。
+
+
+def _raw_osc(text: str, *, wrap: bool = False) -> str:
+    """把文本包成 ``%output`` 负载的原始转义形态（不含行尾换行）。"""
+
+    seq = r"\033]52;c;%s\007" % _b64(text)
+    return r"\033Ptmux;%s" % seq if wrap else seq
+
+
+def _feed_all(stream: osc52.Stream, frames, *, pane: str = "%0") -> list[str]:
+    out: list[str] = []
+    for frame in frames:
+        out.extend(stream.feed(pane, frame))
+    return out
+
+
+@pytest.mark.parametrize("wrap", [False, True])
+@pytest.mark.parametrize("size", [7, 64, 1024])
+def test_stream_reassembles_split_body(wrap, size):
+    """正文中间被切开（真实 tmux 的切点）→ 必须拼回完整文本。"""
+
+    text = "".join("line %03d %s\n" % (i, "x" * 60) for i in range(40))
+    raw = _raw_osc(text, wrap=wrap)
+    frames = [raw[i:i + size] for i in range(0, len(raw), size)]
+    assert len(frames) > 1, "测试本身要保证发生跨帧"
+    assert _feed_all(osc52.Stream(), frames) == [text]
+
+
+@pytest.mark.parametrize(
+    "head,tail",
+    [
+        (r"\033", r"]52;c;"),      # ESC 后立刻断
+        (r"\033]", r"52;c;"),      # "ESC ]" 后断
+        (r"\033]5", r"2;c;"),      # "ESC ]5" 后断
+        (r"\033]52", r";c;"),      # 只差选择区的分号
+    ],
+)
+def test_stream_reassembles_split_header(head, tail):
+    """报文头本身被切开（廉价预筛不能把这一帧丢掉）。"""
+
+    body = _b64("hello")
+    stream = osc52.Stream()
+    assert stream.feed("%0", "prefix" + head) == []
+    assert stream.feed("%0", tail + body + r"\007") == ["hello"]
+
+
+def test_stream_keeps_doubled_escape_across_frames():
+    """``ESC Ptmux;`` 包裹形态里内层 ESC 被重复时，切点落在重复处也一样。"""
+
+    body = _b64("hi")
+    stream = osc52.Stream()
+    assert stream.feed("%0", r"\033Ptmux;\033") == []
+    assert stream.feed("%0", r"\033]52;c;" + body + r"\033\134") == ["hi"]
+
+
+def test_stream_partials_are_per_pane():
+    """两个 pane 交错输出：半条序列不能串味。"""
+
+    body = _b64("hello world")
+    full = r"\033]52;c;" + body + r"\007"
+    stream = osc52.Stream()
+    assert stream.feed("%0", r"\033]52;c;" + body[:5]) == []
+    assert stream.feed("%1", full) == ["hello world"]
+    assert stream.feed("%0", body[5:] + r"\007") == ["hello world"]
+
+
+def test_stream_drops_stale_partial():
+    """半条序列过期 → 丢弃，绝不把后面的新输出拼成垃圾。"""
+
+    stream = osc52.Stream(timeout=1.0)
+    assert stream.feed("%0", r"\033]52;c;AAAA", now=100.0) == []
+    # 2 秒后同一 pane 的下一帧：前半段已经作废
+    assert stream.feed("%0", "BBBB" + r"\007", now=102.0) == []
+    assert stream.feed("%0", _raw_osc("fresh"), now=102.1) == ["fresh"]
+
+
+def test_stream_drops_oversized_partial():
+    """半个序列超过上限 → 连暂存都不做（不信 pane 里的程序）。"""
+
+    stream = osc52.Stream(max_bytes=8)  # _max_raw = 8 * 2 + 64
+    assert stream.feed("%0", r"\033]52;c;" + "A" * 100) == []
+    assert stream.feed("%0", "A" * 100 + r"\007") == []
+    assert len(stream) == 0
+
+
+def test_stream_complete_frame_matches_extract():
+    """单帧行为不变（回归：重写扫描器不得改变 0.9.0 的结果）。"""
+
+    payload = r"\033]52;c;%s\007" % _b64("hi")
+    assert osc52.Stream().feed("%0", payload) == osc52.extract(payload) == ["hi"]
+
+
 # ---------------------------------------------------------------- 后端：开关与队列
 
 
@@ -139,7 +237,45 @@ def test_on_pane_output_pushes_event():
     assert backend.take_clipboard_events() == []  # 取走即清
 
 
-def test_on_pane_output_dedupes_within_window():
+def test_on_pane_output_reassembles_split_frames():
+    """同一 pane 的两帧拼成一条事件（0.9.1 回归：长复制曾整条丢失）。"""
+
+    backend = TmuxBackend("s", "s")
+    text = "".join("line %03d %s\n" % (i, "x" * 60) for i in range(40))
+    raw = r"\033Ptmux;\033]52;c;%s\033\134" % _b64(text)
+    middle = len(raw) // 2
+    backend._on_pane_output("%output %0 " + raw[:middle] + "\n")
+    assert backend.take_clipboard_events() == []
+    backend._on_pane_output("%output %0 " + raw[middle:] + "\n")
+    events = backend.take_clipboard_events()
+    assert [event.text for event in events] == [text]
+    assert events[0].pane_id == "%0"
+
+
+def test_on_pane_output_reassembles_split_header():
+    """报文头被切开的帧不能被预筛吞掉。"""
+
+    backend = TmuxBackend("s", "s")
+    backend._on_pane_output("%output %0 \\033]5\n")
+    assert backend.take_clipboard_events() == []
+    backend._on_pane_output("%output %0 2;c;" + _b64("hi") + "\\007\n")
+    assert [event.text for event in backend.take_clipboard_events()] == ["hi"]
+
+
+def test_on_pane_output_never_mixes_panes():
+    """交错帧来自两个 pane：各自补完，不拼接。"""
+
+    backend = TmuxBackend("s", "s")
+    first = _b64("first text")
+    second = _b64("second text")
+    backend._on_pane_output("%output %0 " + r"\033]52;c;" + first[:5] + "\n")
+    backend._on_pane_output("%output %1 " + r"\033]52;c;" + second + r"\007" + "\n")
+    backend._on_pane_output("%output %0 " + first[5:] + r"\007\n")
+    events = backend.take_clipboard_events()
+    assert [event.text for event in events] == ["second text", "first text"]
+
+
+
     backend = TmuxBackend("s", "s")
     line = "%output %0 " + r"\033]52;c;%s\007" % _b64("same")
     backend._on_pane_output(line)
@@ -216,6 +352,38 @@ def test_control_transport_forwards_both_forms(tmp_path, tmux_name):
             pane, "printf '\\033Ptmux;\\033]52;c;%s\\033\\\\'" % dcs
         )
         assert _wait_until(lambda: backend.take_clipboard_events() != [])
+    finally:
+        backend.kill_server()
+
+
+def test_control_transport_reassembles_long_copy(tmp_path, tmux_name):
+    """真 tmux：长复制必然跨 ``%output`` 帧，必须原样转发（0.9.1 回归）。
+
+    文本 14 KB（base64 约 19 KB）在 1 KiB 与 8 KiB 两种读块下都会切帧。
+    """
+
+    text = "".join("line %03d %s\n" % (i, "x" * 60) for i in range(200))
+    payload = (
+        b"\x1bPtmux;\x1b]52;c;" + _b64(text).encode("ascii") + b"\x1b\\"
+    )
+    source = tmp_path / "osc52-payload.bin"
+    source.write_bytes(payload)
+
+    backend = TmuxBackend(tmux_name, tmux_name, transport=TRANSPORT_CONTROL)
+    backend.create_session(str(tmp_path), 80, 24)
+    try:
+        assert backend.open_control() is True
+        pane = backend.list_panes()[0].pane_id
+        backend.run_command(pane, "cat " + shlex.quote(str(source)))
+
+        got: list[ClipboardEvent] = []
+
+        def _drain() -> bool:
+            got.extend(backend.take_clipboard_events())
+            return bool(got)
+
+        assert _wait_until(_drain, timeout=5.0)
+        assert [event.text for event in got] == [text]
     finally:
         backend.kill_server()
 

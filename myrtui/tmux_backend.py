@@ -534,6 +534,8 @@ class TmuxBackend:
         self._clip_events: deque[ClipboardEvent] = deque(maxlen=CLIPBOARD_MAX_EVENTS)
         self._clip_last: tuple[str, float] | None = None
         self._clip_dropped = 0
+        # 跨帧重组（0.9.1）：一条长 OSC 52 会被 tmux 切进多个 %output 帧
+        self._osc52 = osc52.Stream()
         self.clipboard_enabled = clipboard_passthrough
         # exec 兜底：控制客户端不在时按 1 Hz 看一次 buffer 列表（只覆盖裸形态）
         self._buffer_next = 0.0
@@ -545,16 +547,21 @@ class TmuxBackend:
     def _on_pane_output(self, line: str) -> None:
         """控制通道读线程回调：``%output %<pane> <负载>``。
 
-        只做「有没有 ``]52;``」的廉价判断，命中才解转义 / base64。负载里
-        可能同时有多条（程序连续复制），全部按顺序入队。
+        ``%output`` 是 tmux 按 pty 读取块发的，**一帧只有约 1 KiB 输入字节**
+        （实测 tmux 3.8 / macOS：1024），一条长 OSC 52 会被切成几帧。所以这里
+        不按帧解析，而是把负载交给 :class:`myrtui.osc52.Stream` 按 pane 重组
+        （0.9.1：`>750` 字节的复制曾整条丢失）。廉价预筛也在 ``feed`` 里，
+        否则「报文头被切开」的第一帧会在这一步就被丢掉。
         """
-        if not self.clipboard_enabled or "]52;" not in line:
+        if not self.clipboard_enabled:
             return
-        head, _, payload = line.partition(" ")
+        # 行协议自带一个行尾换行；残片判断要求 payload 精确到最后一个字符，
+        # 所以先剥掉（负载本身是转义过的，不会有裸 CR/LF）。
+        head, _, rest = line.rstrip("\r\n").partition(" ")
         if head != "%output":
             return
-        pane_id, _, payload = payload.partition(" ")
-        for text in osc52.extract(payload):
+        pane_id, _, payload = rest.partition(" ")
+        for text in self._osc52.feed(pane_id, payload):
             self._push_clipboard(text, pane_id or None)
 
     def _push_clipboard(self, text: str, pane_id: str | None = None) -> None:

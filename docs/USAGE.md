@@ -339,7 +339,8 @@ what was copied. `MYRTUI_DRAG_SELECT=always` takes every drag back (v0.35).
   from the control channel and forwards it to your terminal and system clipboard,
   showing `Copied N chars from pane k`. Turn it off with
   `MYRTUI_CLIPBOARD_PASSTHROUGH=0`; a pane program can then still change your
-  clipboard only through its own native command.
+  clipboard only through its own native command. One forwarded copy is capped at
+  256 KiB (decoded); anything larger is ignored and only logged.
 - `MYRTUI_COPY_ON_SELECT=0` disables auto-copy: the selection stays for 10 s,
   `Ctrl-a c` copies it, anything else cancels.
 - `MYRTUI_DRAG_SELECT`: `smart` (default) — program gets the drag, Shift+drag

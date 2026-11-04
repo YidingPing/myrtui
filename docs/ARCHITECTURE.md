@@ -34,7 +34,7 @@ without interpreting a single cell.
 | `instances.py` | instance discovery and lifecycle: lock probing, `ls` table/JSON, attach/stop target resolution, cooperative shutdown marks |
 | `tmux_backend.py` | every tmux invocation: session creation, pane split/close/respawn, `capture-pane`, `send-keys`, `paste-buffer`, resize, `set-clipboard`; the two transports (`exec` / resident `control`), command quoting and framing; the `%output` clipboard watch |
 | `termenv.py` | detects an enclosing tmux/screen (UU Remote's terminal is one); its mouse bindings can take a drag before it reaches myrtui, so the app only warns |
-| `osc52.py` | byte-level extraction of OSC 52 (bare and `ESC Ptmux;` wrapped) from `%output` payloads, including tmux's octal escaping, size caps and query rejection |
+| `osc52.py` | byte-level extraction of OSC 52 (bare and `ESC Ptmux;` wrapped) from `%output` payloads, including tmux's octal escaping, size caps and query rejection; reassembles sequences split across the ~1 KiB `%output` frames |
 | `i18n.py` / `locales/` | UI language resolution (`--lang` > `MYRTUI_LANG` > `config.json` > locale > `en`), flat `key -> text` catalogs, `t()` with `en` fallback; no Textual import, no module-level `t()` |
 | `layout_state.py` | splitter ratios: `0..1` per dimension, atomic JSON write, format version 2, corrupt file → defaults |
 | `gitlog.py` / `gitstat.py` | `git log` (repo-wide and `--follow` per file) and `git status --porcelain -z -uall` parsing, in worker threads |
@@ -107,12 +107,16 @@ inside a pane that copies text (opencode's select-to-copy, `vim "+y`) writes tha
 sequence into the pane, where tmux either stashes it in a paste buffer (bare
 form) or drops it entirely (the `ESC Ptmux;` wrapper every `$TMUX`-aware TUI
 sends — measured on tmux 3.8). The control client hands every matching line to
-the backend, which extracts the base64 payload and queues it for the UI thread;
-`exec` transport falls back to diffing `list-buffers` once a second, which covers
-the bare form only. Nothing else is interpreted: myrtui still paints captured
-text and never emulates a terminal. Things the line protocol cannot carry — stdin
-(`load-buffer`/paste), arguments containing newlines, `kill-server`, the
-pre-client lifecycle commands — always go through `exec`. A dropped control
+the backend, which reassembles per pane before decoding: one `%output` frame
+carries roughly 1 KiB of pane output (1024 bytes measured on tmux 3.8 / macOS),
+so a longer copy arrives in several frames and only the first one has the
+`ESC ]52;` header. Decoded copies are capped at 256 KiB; larger ones are dropped
+with a log line. `exec` transport falls back to diffing `list-buffers` once a
+second, which covers the bare form only. Nothing else is interpreted: myrtui
+still paints captured text and never emulates a terminal. Things the line
+protocol cannot carry — stdin (`load-buffer`/paste), arguments containing
+newlines, `kill-server`, the pre-client lifecycle commands — always go through
+`exec`. A dropped control
 client is closed, the current command runs on `exec`, and reconnection is
 attempted in the background (1 s / 2 s / 5 s) without surfacing a new UI state.
 
