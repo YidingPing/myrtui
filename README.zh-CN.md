@@ -65,6 +65,11 @@ pane。一个项目一个会话，退出再进来还是原来的布局。
 | 图片预览 | Sixel / TGP | ❌ 只剩元信息 + 提示 |
 | `v` 整页排版 | Chrome + `pdftocairo` + 位图 | ❌ |
 
+窄屏（不足 60 列）会**自动进入紧凑档**：一次只显示一个 pane（无边框）、
+侧栏收起、顶栏 tab 只留 `1 2 3 4`，`Ctrl-a b` 改成整页打开侧栏。见
+[在手机上](docs/USAGE.zh-CN.md#在手机上)。`MYRTUI_COMPACT=off` 可让任意尺寸
+都保持旧布局。
+
 ## 安装
 
 需要 `tmux >= 3.1` 与 Python `>= 3.10`（macOS / Linux；不支持 Windows——

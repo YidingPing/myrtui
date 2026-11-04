@@ -73,6 +73,12 @@ What a phone or tablet terminal costs you is the **bitmaps**, not the preview:
 | Image preview | Sixel / TGP | ❌ metadata and a hint |
 | `v` page view | Chrome + `pdftocairo` + bitmaps | ❌ |
 
+Narrow screens (below 60 columns) switch to a **compact layout** automatically:
+one pane at a time (no border), the sidebar hidden, the tab strip reduced to
+`1 2 3 4`, and `Ctrl-a b` opening the sidebar as a full page. See
+[On a phone](docs/USAGE.md#on-a-phone). `MYRTUI_COMPACT=off` keeps the old
+layout at any size.
+
 ## Install
 
 Requires `tmux >= 3.1` and Python `>= 3.10` (macOS and Linux; Windows is not

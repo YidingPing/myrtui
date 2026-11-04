@@ -7,6 +7,11 @@ P1 起标签是 1..4 个可点击 tab（点击等价 Ctrl-a N 切焦点），`+`
 v0.22：`Kill` 右侧新增 `?`，悬停时由 App 弹出快捷键浮层。按钮把鼠标
 Enter/Leave 转成 ``HoverStart`` / ``HoverEnd`` 消息（所有按钮通用，App 只
 关心 ``btn-help``），避免 topbar 直接依赖 App 的私有方法。
+
+0.10.0 紧凑档（``set_compact``）：tab 只留序号（``1 2 3``），按钮文案压成
+``+ d k ?``，品牌由 CSS 隐藏（``Screen.compact #topbar-brand``）。紧凑顶栏
+宽度 = 4×3 + 4×3 = 24 列，40 列屏还剩 16 格给状态——46 列上 `?` 被挤出屏
+外是 0.9.x 的真机问题（见内部 0.10.0 计划 §0）。
 """
 from __future__ import annotations
 
@@ -24,6 +29,14 @@ MAX_TABS = 4
 
 # 顶栏右上角品牌：程序名 + 包版本（源码真值；发版时与 pyproject 同步 bump）
 BRAND_TEXT = f"myrtui {__version__}"
+
+# 0.10.0 紧凑档按钮文案：`d`/`k` 与 `Ctrl-a d/k` 同字母（`k` 仍有二次确认）
+COMPACT_BUTTON_TEXTS = {
+    "btn-new": " + ",
+    "btn-detach": " d ",
+    "btn-kill": " k ",
+    "btn-help": " ? ",
+}
 
 
 class TopBarButton(Static):
@@ -118,6 +131,12 @@ class TopBar(Static):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._status = ""
+        # 0.10.0：缓存最近一次拓扑与按钮完整文案——切紧凑档时要原地重渲染，
+        # 不能等下一次 poll 才把 `1:zsh` 换成 `1`。
+        self._labels: list[str] = []
+        self._deads: list[bool] = []
+        self._active = 0
+        self._compact = False
 
     def compose(self) -> ComposeResult:
         for i in range(MAX_TABS):
@@ -135,21 +154,56 @@ class TopBar(Static):
         标签文本调用方已做防闪烁（仅变更时才进到这里不现实，本方法内部
         对 body/dead/active 各自全等比较，无 diff 不触发 update）。
         """
+        self._labels = list(labels)
+        self._deads = list(deads)
+        self._active = active
+        self._render_tabs()
+
+    def _render_tabs(self) -> None:
+        """按缓存拓扑渲染 tab（``set_tabs`` 与 ``set_compact`` 共用的出口）。"""
         for i in range(MAX_TABS):
             tab = self.query_one(f"#tab-{i}", PaneTab)
-            visible = i < len(labels)
+            visible = i < len(self._labels)
             if visible != tab.display:
                 tab.display = visible
             if visible:
+                label = self._labels[i]
+                if self._compact:
+                    # 紧凑档只留序号：`1:zsh` → `1`（cmd 在每个 tab 上重复
+                    # 占地，40 列屏上正是它挤掉了 `?`）
+                    label = label.split(":", 1)[0]
                 tab.set_state(
-                    labels[i],
-                    dead=i < len(deads) and deads[i],
-                    active=i == active,
+                    label,
+                    dead=i < len(self._deads) and self._deads[i],
+                    active=i == self._active,
                 )
         new_btn = self.query_one("#btn-new", TopBarButton)
-        want_disabled = len(labels) >= MAX_TABS
+        want_disabled = len(self._labels) >= MAX_TABS
         if new_btn.is_disabled != want_disabled:
             new_btn.set_disabled(want_disabled)
+
+    def set_compact(self, compact: bool) -> None:
+        """切紧凑档的顶栏形态（幂等；App._apply_compact 调用）。
+
+        按钮文案与 tab 都按当前缓存重渲染——只改 ``display`` 的话，退出紧凑
+        后标签会停在 ``1`` 直到下一次拓扑/命令变化。
+        """
+        if compact == self._compact:
+            return
+        self._compact = compact
+        texts = (
+            COMPACT_BUTTON_TEXTS
+            if compact
+            else {
+                "btn-new": " + ",
+                "btn-detach": f" {t('topbar.detach')} ",
+                "btn-kill": f" {t('topbar.kill')} ",
+                "btn-help": " ? ",
+            }
+        )
+        for button_id, text in texts.items():
+            self.query_one(f"#{button_id}", TopBarButton).update(text)
+        self._render_tabs()
 
     def set_status(self, text: str) -> None:
         """顶部状态提示（如「与会话失去连接」）。"""

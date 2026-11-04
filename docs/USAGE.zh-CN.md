@@ -100,6 +100,7 @@ window/pane 创建时快照选项，`Ctrl-a r` 重开的也是建窗时记录的
 | 变量 | 作用 |
 |---|---|
 | `MYRTUI_LANG` | 界面语言：`en`（默认）/ `zh_CN`。优先级：`--lang` > `MYRTUI_LANG` > `config.json` 的 `lang` > `LC_ALL`/`LANG` 是否 `zh*` > `en`；改完重启生效。 |
+| `MYRTUI_COMPACT` | 窄屏布局：`auto`（默认）= 宽 < 60 列或高 < 16 行进入紧凑档、宽 >= 64 且高 >= 18 才退出（带滞回，软键盘弹收不来回闪）；`on` 强制紧凑；`off` 保持旧布局。 |
 | `MYRTUI_IDLE_INTERVAL` | 空闲轮询间隔（秒，float，默认 `0.15`；非法/非正值回落默认，合法值夹取 `0.05–5.0`）。画面持续变化时（`tail -f`、图像动画）myrtui 自己提到约 17 次/秒，静止后回落，不必手动调。多实例时给**后台/次要实例**降频：`MYRTUI_IDLE_INTERVAL=0.5 myrtui`（空闲抓屏 6.7 → 2 次/s，系统级 fork 与 CPU 同降；显式调大后不再自动提频）。活跃实例保持默认即可。 |
 | `MYRTUI_TRANSPORT` | tmux 传输方式：`auto`（默认，常驻 `tmux -C` 客户端；建不起来时自动回落逐次起进程）/ `exec`（每次调用起一个 tmux 进程，旧路径）/ `control`（强制常驻，建不起来直接报错）。非法值告警后按 `auto`。 |
 | `MYRTUI_LOG` | TUI 接管终端后 warning 写到哪里（默认平台日志目录：macOS `~/Library/Logs/myrtui/myrtui.log`、Linux `~/.local/state/myrtui/log/`）；空串 = 不落盘。启动前的 CLI 错误仍走 stderr。 |
@@ -271,6 +272,23 @@ S="$HOME/Library/Application Support/UURemote/tmux.sock"
 `~/.zshrc` 的函数最省事；**不要**去改 UU app bundle 里的 `uuremote.conf`，升级
 与签名都会踩）。粗暴替代是 `tmux set -g mouse off`：所有鼠标事件都交给程序，代价
 是外层自己的拖选复制也没了。
+
+## 在手机上
+
+不足 60 列（或不足 16 行）时自动切到**紧凑档**：侧栏收起、只显示当前 pane
+（去掉 1 cell 边框）、顶栏 tab 只留 `1 2 3 4`、按钮压成 `+ d k ?`。46×22 的
+手机竖屏因此是一个 46×21 的 pane，而不是四块 10 列的「看不清」。窗口变宽后
+自动恢复；阈值带滞回（进 < 60，退 >= 64×18），软键盘反复弹收不会来回切布局。
+
+- `Ctrl-a b` 把侧栏当**整页**打开（pane 区隐藏）；再按一次、按 `Esc`、或点
+  顶栏 tab 返回。
+- `Ctrl-a s` / `Ctrl-a g` 先打开整页，再把焦点给文件树 / Git 历史。
+- `Ctrl-a 1..4` 或点 tab 切换可见 pane。被隐藏的 pane 保持原 tmux 尺寸，切回去
+  时重排一次。
+- 紧凑档不能拖分隔线（线全隐藏）；`layout.json` 里的比例不动，宽屏恢复后照旧。
+
+`MYRTUI_COMPACT=on` 在任意尺寸强制紧凑档；`off` 立刻回到旧布局（不需要回退
+代码）。
 
 ## 左侧侧栏（文件树 + Git 历史）
 

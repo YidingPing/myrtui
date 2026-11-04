@@ -143,6 +143,27 @@ the alternate screen). If the program requested mouse reporting (`vim` with
 injected with the encoding the program asked for (SGR 1006, otherwise the legacy
 3-byte form). `Shift`+wheel always scrolls the scrollback regardless.
 
+### On a phone
+
+Below 60 columns (or 16 rows) myrtui switches to a **compact layout**: the
+sidebar is hidden, only the focused pane is shown (without the 1-cell border),
+the tab strip is just `1 2 3 4`, and the top bar buttons shrink to `+ d k ?`.
+That keeps a 46×22 phone screen at one 46×21 pane instead of four 10-column
+ones. Moving back to a wider window restores the layout; the thresholds have
+hysteresis (enter below 60, leave at 64×18), so a soft keyboard appearing and
+disappearing does not flip the layout back and forth.
+
+- `Ctrl-a b` opens the sidebar as a **full page** (the pane area is hidden);
+  press it again, press `Esc`, or click a tab to return.
+- `Ctrl-a s` / `Ctrl-a g` open that page and focus the file tree / git history.
+- `Ctrl-a 1..4` or the tabs switch the visible pane. The hidden panes keep
+  their tmux size until you switch back, then reflow once.
+- Splitter handles are hidden while compact; the ratios in `layout.json` are
+  left untouched and apply again on a wide screen.
+
+`MYRTUI_COMPACT=on` forces the compact layout at any size; `off` restores the
+old layout immediately (no code rollback needed).
+
 ## Sidebar: file tree and git history
 
 **File tree** — starts at the project root with its first level. Clicking a
@@ -396,6 +417,7 @@ the outer tmux's own drag-to-copy is gone.
 | Variable | Default | Meaning |
 |---|---|---|
 | `MYRTUI_LANG` | `en` | UI language: `en` / `zh_CN`. Also read from `config.json`'s `lang` and from a `zh*` locale; `--lang` wins for one run |
+| `MYRTUI_COMPACT` | `auto` | narrow-screen layout: `auto` enters the compact layout below 60 columns / 16 rows and leaves at 64×18 (hysteresis); `on` forces it, `off` keeps the old layout |
 | `MYRTUI_EDITOR` | — | editor for "Open" (see resolution order above) |
 | `MYRTUI_IDLE_INTERVAL` | `0.15` | idle capture interval in seconds (clamped to `0.05–5.0`); while content keeps changing the loop speeds up to ~17 Hz by itself; raise it for secondary instances (`MYRTUI_IDLE_INTERVAL=0.5 myrtui`) |
 | `MYRTUI_TRANSPORT` | `auto` | tmux transport: `auto` = a resident `tmux -C` client, falling back to one process per call when attach fails; `exec` = one process per call (old path); `control` = require the resident client (errors out if it cannot start) |

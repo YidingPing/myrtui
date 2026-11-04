@@ -40,7 +40,7 @@ without interpreting a single cell.
 | `gitlog.py` / `gitstat.py` | `git log` (repo-wide and `--follow` per file) and `git status --porcelain -z -uall` parsing, in worker threads |
 | `fileview.py` | decoding a preview (UTF-8-SIG → UTF-8 → locale → replace), size/line limits, binary detection |
 | `mouse.py` | mouse event decoding and routing (SGR/legacy), drag selection, click-vs-drag arbitration |
-| `client/app.py` | the App: CSS, focus model, `Ctrl-a` prefix state machine, pane layouts, polling loop, clipboard actions |
+| `client/app.py` | the App: CSS, focus model, `Ctrl-a` prefix state machine, pane layouts, compact (narrow-screen) mode, polling loop, clipboard actions |
 | `client/pane_widget.py` | one widget per pane: renders captured text, dead-pane styling, focus border |
 | `client/separators.py` | splitter hit areas (±1 cell), drag/double-click reset, ratio persistence |
 | `client/sidebar.py` / `file_tree.py` / `git_panel.py` | left column: tree with git colours + commit history with hover details |

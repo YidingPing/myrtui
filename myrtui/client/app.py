@@ -262,6 +262,45 @@ def resolve_drag_select(raw: str | None) -> str:
     return value if value in ("always", "app", "smart") else "smart"
 
 
+# ── 0.10.0 窄屏紧凑档（compact）──
+# 阈值是估的（手机竖屏实测 40–50 列 × 20 行；见内部 0.10.0 计划 §0/§4）：
+# 进入看「宽 < 60 或 高 < 16」，退出要「宽 >= 64 且 高 >= 18」——进/出各留
+# 4 列 / 2 行滞回，软键盘反复弹出时不会在阈值上闪。宽度是主判据（60 列时
+# 侧栏 min-width 20 已吃掉 1/3 屏）；高度只兜「很矮但很宽」，横屏手机
+# 80×20 保持桌面档（2×2 每块 40×9 仍可用）。
+COMPACT_ENTER_WIDTH = 60
+COMPACT_EXIT_WIDTH = 64
+COMPACT_ENTER_HEIGHT = 16
+COMPACT_EXIT_HEIGHT = 18
+
+
+def resolve_compact_mode(raw: str | None) -> str:
+    """解析 ``MYRTUI_COMPACT`` → ``"auto"`` / ``"on"`` / ``"off"``。
+
+    ``off`` 是回滚开关（立刻回到 0.9.x 布局，不需要回退代码）；未设 / 空串 /
+    非法值一律按 ``auto``——这是视口自适应，不是需要校验的配置点。
+    """
+    if raw is None:
+        return "auto"
+    value = raw.strip().lower()
+    return value if value in ("auto", "on", "off") else "auto"
+
+
+def compact_for(width: int, height: int, was: bool, mode: str) -> bool:
+    """尺寸 + 上一状态 + 模式 → 是否进入紧凑档（带滞回）。
+
+    ``was`` 是上一帧的判定：进入与退出用不同阈值，否则在 60 列上下拖窗口
+    （或软键盘反复弹收）会来回切换整屏布局。
+    """
+    if mode == "on":
+        return True
+    if mode == "off":
+        return False
+    if was:
+        return not (width >= COMPACT_EXIT_WIDTH and height >= COMPACT_EXIT_HEIGHT)
+    return width < COMPACT_ENTER_WIDTH or height < COMPACT_ENTER_HEIGHT
+
+
 def map_key(key: str, character: str | None = None) -> tuple[str, str] | None:
     """Textual key 名 → ("text", s) 或 ("keys", tmux 键名)；无法映射返回 None。
 
@@ -572,6 +611,14 @@ class TerminalApp(App, inherit_bindings=False):
     #col-a { width: 50fr; height: 1fr; }
     #col-b { width: 50fr; height: 1fr; }
     PaneWidget { width: 1fr; height: 1fr; }
+    /* 0.10.0 紧凑档（窄屏，App._apply_compact 给当前屏加 .compact）：
+       - 品牌占几十列，窄屏上直接让给状态与按钮；
+       - 单 pane 视图下边框没有分隔作用（焦点由顶栏 active tab 表示），
+         去掉白赚 2 列 2 行；`:focus` 那条要显式压过 PaneWidget.DEFAULT_CSS
+         的 heavy 边框，否则聚焦时又长回来。 */
+    Screen.compact #topbar-brand { display: none; }
+    Screen.compact PaneWidget { border: none; }
+    Screen.compact PaneWidget:focus { border: none; }
     """
 
     def __init__(
@@ -698,6 +745,18 @@ class TerminalApp(App, inherit_bindings=False):
         self._active_index = 0
         self._tab_labels: list[str] = []
         self._tab_deads: list[bool] = []
+        # ── 0.10.0 紧凑档（窄屏）──
+        # _compact 只由视口尺寸 + MYRTUI_COMPACT 决定，**不落盘**（视口的函数，
+        # 不是用户偏好）；_sidebar_want 记住桌面档下用户对侧栏的偏好，退出
+        # 紧凑时按它恢复；_compact_page = 紧凑档下「侧栏整页」是否打开；
+        # _compact_dirty = 预览层盖住主屏期间尺寸变了，回到主屏要补一次。
+        self._compact_mode: str = resolve_compact_mode(
+            _os.environ.get("MYRTUI_COMPACT")
+        )
+        self._compact = False
+        self._compact_page = False
+        self._sidebar_want = True
+        self._compact_dirty = False
         self._shell_names = set(SHELL_COMMANDS)
         env_shell = _os.environ.get("SHELL")
         if env_shell:
@@ -812,19 +871,8 @@ class TerminalApp(App, inherit_bindings=False):
             self._mouse_down_forwarded = False
         count = len(ids)
         self._active_index = min(self._active_index, max(0, count - 1))
-        # 列显隐决定布局档（v0.12 列优先）：1槽→全宽（col-b 隐藏）；2槽→上下分；
-        # 3槽→左2右1（右列只有 pane-2）；4槽→2×2（左列 pane-0/1、右列 pane-2/3）
-        col_b_visible = count >= 3
-        col_b = self.query_one("#col-b")
-        if col_b.display != col_b_visible:
-            col_b.display = col_b_visible
-        for slot in range(MAX_PANES):
-            widget = self.query_one(f"#pane-{slot}", PaneWidget)
-            visible = slot < count
-            if visible:
-                widget.pane_id = ids[slot]
-            if widget.display != visible:
-                widget.display = visible
+        # 列 / 槽位显隐（0.10.0：紧凑档只留活动槽，桌面档沿用 v0.12 列优先）
+        self._apply_pane_visibility()
         # 顶栏标签按新拓扑补长/截断（真实 command/dead 由下次 poll 刷新）：
         # 只截断不补长的话，新建 pane 后 set_tabs 按旧长度会把新 tab 藏到
         # 下一轮 poll；只补长不截断的话，关 pane 后会残留多余标签。
@@ -843,6 +891,41 @@ class TerminalApp(App, inherit_bindings=False):
             self.query_one(f"#pane-{self._active_index}", PaneWidget).focus()
         # IME 锚点（v0.18）：拓扑变化（槽位显隐/移位）→ content_region 移位
         self._sync_ime_anchor()
+
+    def _apply_pane_visibility(self) -> None:
+        """按拓扑 + 紧凑档计算列 / 槽位显隐（``_topology_apply`` / ``_set_active``
+        / ``_apply_compact`` 三处共用）。
+
+        桌面档（v0.12 列优先）：1槽→全宽（col-b 隐藏）；2槽→上下分；3槽→
+        左2右1；4槽→2×2。紧凑档：只显示 ``_active_index`` 对应的槽，tab 当
+        切换器（隐藏槽不参与 fr 归一化，可见槽自动占满 100%）；侧栏整页打开
+        时 pane 区整体隐藏，列也一并收起。``count == 0`` 时列与槽位全隐藏。
+        """
+        count = len(self._pane_ids)
+        active = min(self._active_index, max(0, count - 1))
+        page = self._compact and self._compact_page
+        if page:
+            col_a = col_b = False
+            visible: set[int] = set()
+        elif self._compact:
+            col_a = count >= 1 and active < 2
+            col_b = count >= 3 and active >= 2
+            visible = {active} if count else set()
+        else:
+            col_a = count >= 1
+            col_b = count >= 3
+            visible = set(range(count))
+        for col_id, shown in (("#col-a", col_a), ("#col-b", col_b)):
+            col = self.query_one(col_id)
+            if col.display != shown:
+                col.display = shown
+        for slot in range(MAX_PANES):
+            widget = self.query_one(f"#pane-{slot}", PaneWidget)
+            shown = slot in visible
+            if shown:
+                widget.pane_id = self._pane_ids[slot]
+            if widget.display != shown:
+                widget.display = shown
 
     def _sync_topology(self) -> None:
         """提交一次拓扑同步 job（B1 §3.2-2）：线程段 list-panes → 循环段 apply。
@@ -933,6 +1016,11 @@ class TerminalApp(App, inherit_bindings=False):
         if not (0 <= index < len(self._pane_ids)):
             return  # 越界槽位静默忽略（Ctrl-a 4 但只有 2 个 pane）
         self._active_index = index
+        # 紧凑档的侧栏整页开着时，先关页面再聚焦（页面关闭本身不碰焦点，
+        # 由这里决定——避免 _set_active ↔ 关页面互相递归）。
+        self._set_compact_page(False)
+        # 紧凑档单 pane 视图：活动槽换了 → 可见槽跟着换（桌面档是幂等的）
+        self._apply_pane_visibility()
         self.query_one(f"#pane-{index}", PaneWidget).focus()
         self._update_tabs()
         # IME 锚点（v0.18）：切焦点瞬间选字框就得跟到新 pane，不等下轮 poll
@@ -1041,19 +1129,95 @@ class TerminalApp(App, inherit_bindings=False):
             return
         self._set_active(min(self._active_index, len(self._pane_ids) - 1))
 
-    def action_toggle_sidebar(self) -> None:
-        """Ctrl-a b：折叠 / 展开侧栏。
+    # ---------- 紧凑档：窄屏整屏降级（0.10.0） ----------
 
-        折叠后 pane 变宽 → Textual 的 resize 事件 → ``resize-window`` 联动
-        自动生效（§9 验收 8）。
+    def _apply_compact(
+        self, width: int | None = None, height: int | None = None
+    ) -> None:
+        """把当前视口尺寸算出的紧凑态落到 DOM（幂等）。
+
+        只改可见性 / 顶栏形态 / CSS class，**不写布局比例**——侧栏宽度归
+        ``_apply_ratios``（它读 ``_compact``），两处各写一次会互相覆盖。
+        预览层盖住主屏时不会走到这里（``on_resize`` 只置 ``_compact_dirty``）。
+
+        ``width`` / ``height`` 由 ``on_resize`` 传入 ``event.size``：App 的
+        ``_on_resize``（基类）在**我们之后**才更新 ``App._size``，所以事件
+        处理的当下 ``self.size`` 还是旧值。
+        """
+        if width is None or height is None:
+            width, height = self.size.width, self.size.height
+        compact = compact_for(width, height, self._compact, self._compact_mode)
+        if compact != self._compact and not compact:
+            # 退出紧凑 → 整页侧栏复位；桌面档按 _sidebar_want 恢复可见性
+            self._compact_page = False
+        self._compact = compact
+        self.screen.set_class(compact, "compact")
+        self._apply_sidebar_visibility()
+        self._apply_pane_visibility()
+        self.query_one(TopBar).set_compact(compact)
+        # 焦点不能悬在一个刚被隐藏的侧栏上（进入紧凑 / 退出时侧栏偏好为
+        # 折叠都会走到这里）；整页打开时侧栏仍可见，不动焦点。
+        try:
+            if self._sidebar_focused() and not self._sidebar().display:
+                self._focus_active_pane()
+        except NoMatches:
+            return  # teardown 竞态（v0.16 口径）
+
+    def _apply_sidebar_visibility(self) -> None:
+        """按紧凑档 / 整页 / 桌面偏好设侧栏与 pane 区的 display。
+
+        ``action_toggle_sidebar`` / ``action_focus_sidebar`` /
+        ``action_focus_git_log`` 都走这里，避免三处各写一遍 display。
+        分隔线显隐一并刷新（侧栏藏起来时 sep-main / sep-tree 也得藏）。
         """
         sidebar = self._sidebar()
-        sidebar.display = not sidebar.display
-        self._sync_separators()  # 侧栏旁的竖线跟着藏 / 显
-        if sidebar.display:
+        show_sidebar = self._compact_page if self._compact else self._sidebar_want
+        show_panes = not (self._compact and self._compact_page)
+        if sidebar.display != show_sidebar:
+            sidebar.display = show_sidebar
+        container = self.query_one("#pane-container")
+        if container.display != show_panes:
+            container.display = show_panes
+        self._sync_separators()
+
+    def _set_compact_page(self, page: bool) -> None:
+        """紧凑档下开关「侧栏整页」；桌面档 no-op。
+
+        打开时焦点给文件树（否则焦点留在一个已隐藏的 pane 上，键全丢）；
+        关闭只改可见性——由调用方决定焦点去哪（``_set_active`` 随后聚焦
+        活动 pane），避免与 ``_set_active`` 互相递归。
+        """
+        page = bool(page) and self._compact
+        if self._compact_page == page:
+            return
+        self._compact_page = page
+        self._apply_sidebar_visibility()
+        self._apply_pane_visibility()
+        if page:
+            self.query_one("#file-tree", FileTree).focus()
+
+    def action_toggle_sidebar(self) -> None:
+        """Ctrl-a b：折叠 / 展开侧栏（紧凑档 = 打开 / 关闭整页侧栏）。
+
+        桌面档折叠后 pane 变宽 → Textual 的 resize 事件 → ``resize-window``
+        联动自动生效（§9 验收 8）。紧凑档下 20 列的文件树没意义，改成整页：
+        侧栏占满全宽、pane 区隐藏；再按一次（或 Esc / 点 tab）返回。
+        """
+        if self._compact:
+            self._set_compact_page(not self._compact_page)
+            if self._compact_page:
+                self._refresh_status()
+                self._refresh_git_log()  # 打开页面立刻补一次历史
+                self._sidebar().refresh_file_status()
+            else:
+                self._focus_active_pane()
+            return
+        self._sidebar_want = not self._sidebar_want
+        self._apply_sidebar_visibility()
+        if self._sidebar_want:
             self._refresh_status()
             self._refresh_git_log()  # 展开回来立刻补一次历史
-            sidebar.refresh_file_status()  # 补一次文件树状态配色
+            self._sidebar().refresh_file_status()  # 补一次文件树状态配色
         elif self._sidebar_focused():
             self._focus_active_pane()  # 侧栏被隐藏 → 焦点不能悬空
 
@@ -1061,27 +1225,33 @@ class TerminalApp(App, inherit_bindings=False):
         """Ctrl-a s：焦点移入侧栏（文件树）。
 
         键盘用户进入侧栏的唯一入口（无鼠标环境下树的键盘导航否则不可达）。
-        与 ``Esc`` 互逆，构成「进侧栏 ↔ 回终端」的一对键。
+        与 ``Esc`` 互逆，构成「进侧栏 ↔ 回终端」的一对键。紧凑档先开整页，
+        再给焦点。
         """
-        sidebar = self._sidebar()
-        if not sidebar.display:
-            sidebar.display = True
-            self._sync_separators()
-        sidebar.query_one("#file-tree", FileTree).focus()
+        if self._compact:
+            self._set_compact_page(True)
+        else:
+            if not self._sidebar_want:
+                self._sidebar_want = True
+                self._apply_sidebar_visibility()
+        self.query_one("#file-tree", FileTree).focus()
         self._refresh_status()
 
     def action_focus_git_log(self) -> None:
         """Ctrl-a g：焦点移入侧栏的 Git 历史面板（v0.22）。
 
-        与 ``Ctrl-a s``（文件树）对称。侧栏折叠时先展开并补一次取数；
-        面板只读——↑↓ 移动高亮，``Esc`` 回当前活动 pane。
+        与 ``Ctrl-a s``（文件树）对称。紧凑档先开整页；侧栏折叠时先展开并
+        补一次取数；面板只读——↑↓ 移动高亮，``Esc`` 回当前活动 pane。
         """
-        sidebar = self._sidebar()
-        if not sidebar.display:
-            sidebar.display = True
-            self._sync_separators()
+        if self._compact:
+            self._set_compact_page(True)
             self._refresh_git_log()
-            sidebar.refresh_file_status()
+            self._sidebar().refresh_file_status()
+        elif not self._sidebar_want:
+            self._sidebar_want = True
+            self._apply_sidebar_visibility()
+            self._refresh_git_log()
+            self._sidebar().refresh_file_status()
         try:
             self.query_one("#git-log", GitLogPanel).focus()
         except NoMatches:
@@ -1103,8 +1273,18 @@ class TerminalApp(App, inherit_bindings=False):
         精确比例，还顺带白送「窗口缩放时比例不变」。
         """
         r = self._ratios
-        self.query_one("#sidebar").styles.width = self._fr(r["sidebar"])
-        self.query_one("#pane-container").styles.width = self._fr(1 - r["sidebar"])
+        if self._compact:
+            # 紧凑档：侧栏只在「整页」时出现，所以固定吃满整宽（1fr + 100%
+            # 上限）；必须**内联**写——否则 CSS 的 15fr / max-width:50% 会在
+            # 关闭页面后残留，或把整页侧栏钳在半屏。
+            sidebar = self.query_one("#sidebar")
+            sidebar.styles.width = "1fr"
+            sidebar.styles.max_width = "100%"
+            self.query_one("#pane-container").styles.width = "1fr"
+        else:
+            self.query_one("#sidebar").styles.width = self._fr(r["sidebar"])
+            self.query_one("#sidebar").styles.max_width = "50%"
+            self.query_one("#pane-container").styles.width = self._fr(1 - r["sidebar"])
         self.query_one("#file-tree").styles.height = self._fr(r["tree"])
         # v0.11.3：git-log 包进 #git-area 后，对半 fr 落在容器上；
         # 标题(1) + 历史(1fr) 在容器内部分配（#git-log 的高度由 CSS 管）
@@ -1136,15 +1316,20 @@ class TerminalApp(App, inherit_bindings=False):
         藏起来的块旁边的线必须一起藏：否则会留一条 1 cell 的死线，还把
         fr 空间白吃掉一块（比例立刻失真）。
         """
-        count = len(self._pane_ids)
-        sidebar_visible = self._sidebar().display
-        visibilities = {
-            "sep-main": sidebar_visible,
-            "sep-tree": sidebar_visible,  # 在侧栏内部
-            "sep-cols": count >= 3,       # 左右两列之间（右列存在才有）
-            "sep-rows-a": count >= 2,     # 左列内上下分
-            "sep-rows-b": count >= 4,     # 右列内上下分
-        }
+        if self._compact:
+            # 紧凑档单 pane / 整页侧栏都没有可拖的分割：线全藏（比例仍在
+            # layout.json，宽屏恢复后照旧）。
+            visibilities = {sep_id: False for sep_id in SEPARATOR_SPECS}
+        else:
+            count = len(self._pane_ids)
+            sidebar_visible = self._sidebar().display
+            visibilities = {
+                "sep-main": sidebar_visible,
+                "sep-tree": sidebar_visible,  # 在侧栏内部
+                "sep-cols": count >= 3,       # 左右两列之间（右列存在才有）
+                "sep-rows-a": count >= 2,     # 左列内上下分
+                "sep-rows-b": count >= 4,     # 右列内上下分
+            }
         for sep_id, visible in visibilities.items():
             sep = self.query_one(f"#{sep_id}", Separator)
             if sep.display != visible:
@@ -1741,7 +1926,9 @@ class TerminalApp(App, inherit_bindings=False):
             sep_id: self.query_one(f"#{sep_id}", Separator)
             for sep_id in SEPARATOR_SPECS
         }
-        # 先落比例（attach 恢复上次的位置），再同步拓扑
+        # 0.10.0：先按启动尺寸定紧凑档，再落比例（_apply_ratios 要知道
+        # _compact 才决定侧栏是 1fr 还是 layout.json 的比例），最后同步拓扑。
+        self._apply_compact()
         self._apply_ratios()
         self._sync_topology()
         # 单一定时器 + 尾部延迟控制（§8）：高频段 30ms，空闲段 IDLE_INTERVAL
@@ -2090,6 +2277,14 @@ class TerminalApp(App, inherit_bindings=False):
         推进——所以这一轮 poll 会发现全部 diff、把 pane / tab / 顶栏一次补画
         完，而不是等下一个 tick，更不会把旧画面留在屏幕上。
         """
+        if self._compact_dirty:
+            # 0.10.0：预览层盖住期间软键盘可能改了尺寸（on_resize 只置脏位）——
+            # 回主屏时补一次紧凑判定 + 比例，不等下一轮 poll。放在 _paint_frozen
+            # 早退之前：模态期间没跑过 poll 时冻结位可能仍是 False。
+            self._compact_dirty = False
+            if isinstance(self.screen, MainScreen):
+                self._apply_compact()
+                self._apply_ratios()
         if not self._paint_frozen:
             return
         self._paint_frozen = False
@@ -3158,10 +3353,23 @@ class TerminalApp(App, inherit_bindings=False):
         """窗口尺寸变化 → 收起浮层（绝对定位已过期，避免停在错误位置）。
 
         v0.35：拖拽中的几何已过期 → 取消手势 + 解冻。
+        0.10.0：紧凑档只由尺寸决定；变了才落 DOM（幂等路径也要重算比例）。
+        预览层盖住主屏时只记脏位——主屏的 DOM 写入在模态期间一律跳过，
+        等 ``_catch_up_after_modal`` 补。
         """
         if self._has_pending_selection():
             self._cancel_gesture()
         self._hide_shortcut_help()
+        size = getattr(event, "size", None)
+        width = size.width if size is not None else self.size.width
+        height = size.height if size is not None else self.size.height
+        if not isinstance(self.screen, MainScreen):
+            self._compact_dirty = True
+            return
+        compact = compact_for(width, height, self._compact, self._compact_mode)
+        if compact != self._compact:
+            self._apply_compact(width, height)
+            self._apply_ratios()
 
     def on_app_blur(self, event) -> None:
         """外层终端失焦（v0.35）：收摊手势 / 高亮，避免回来后画面永久冻结。"""
