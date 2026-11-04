@@ -14,12 +14,13 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
+import time
 
-from textual.events import MouseDown
+from textual.events import MouseDown, MouseMove, MouseUp
 from textual.widgets import Label
 
 from myrtui.client import app as app_module
-from myrtui.client.app import TerminalApp
+from myrtui.client.app import MainScreen, TerminalApp
 from myrtui.client.pane_widget import PaneWidget
 from myrtui.client.shortcuts import SECTIONS, ShortcutHelp
 from myrtui.client.topbar import TopBar
@@ -98,6 +99,28 @@ def _fast(monkeypatch) -> None:
 def _texts(panel: ShortcutHelp) -> str:
     rendered = panel.query_one("#shortcut-help-body").render()
     return rendered.plain if hasattr(rendered, "plain") else str(rendered)
+
+
+def _mouse(cls, x: int, y: int, button: int = 1):
+    """构造屏幕坐标的鼠标事件。
+
+    绕过 ``Pilot.click``：它在入口就把 ``screen`` 锁定成主屏、把 MouseUp 也
+    发给主屏，测不出「确认框收走 MouseUp」的真实时序。
+    """
+    return cls(
+        widget=None, x=x, y=y, delta_x=0, delta_y=0, button=button,
+        shift=False, meta=False, ctrl=False,
+        screen_x=float(x), screen_y=float(y),
+    )
+
+
+async def _wait_until(pilot, cond, timeout: float = 5.0, interval: float = 0.02):
+    deadline = time.monotonic() + timeout
+    while not cond():
+        if time.monotonic() > deadline:
+            return False
+        await pilot.pause(interval)
+    return True
 
 
 # ---------- 顶栏布局 ----------
@@ -201,6 +224,41 @@ def test_click_help_button_after_hover_closes(monkeypatch):
             await pilot.click("#btn-help")
             await pilot.pause(0.1)
             assert not panel.display
+    asyncio.run(scenario())
+
+
+def test_topbar_modal_button_cancel_leaves_no_selection():
+    """点会弹确认框的顶栏按钮 → 取消后主屏不得停在选字状态（0.10.0 真机）。
+
+    Static 默认 ``ALLOW_SELECT=True``：Screen 在转发 MouseDown 之前就建了
+    选区状态，而按钮的 Pressed 立刻弹确认框，真实 MouseUp 落到模态屏 →
+    主屏收不到松开事件；取消后鼠标一动就开始选字。``Pilot.click`` 复现不了
+    （它把 MouseUp 固定回主屏），这里按真实时序手动发。
+    """
+    async def scenario():
+        app = TerminalApp(_FakeBackend(2), _root())
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.4)
+            main = app.screen
+            btn = app.query_one("#btn-kill")
+            x, y = btn.region.x + 1, btn.region.y
+
+            main._forward_event(_mouse(MouseDown, x, y))
+            assert await _wait_until(
+                pilot, lambda: not isinstance(app.screen, MainScreen)
+            ), app.screen
+            # 真实的 MouseUp 到当时的最上层屏（确认框），主屏收不到
+            app.screen._forward_event(_mouse(MouseUp, 1, 1))
+            await pilot.press("escape")
+            assert await _wait_until(
+                pilot, lambda: isinstance(app.screen, MainScreen)
+            )
+
+            assert main._selecting is False, "取消后主屏不得仍处于选字状态"
+            assert main._select_state is None
+            main._forward_event(_mouse(MouseMove, 5, 10))
+            await pilot.pause(0.1)
+            assert main.selections == {}, "移动鼠标不得画出选区"
     asyncio.run(scenario())
 
 

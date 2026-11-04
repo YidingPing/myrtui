@@ -18,6 +18,7 @@ import time
 from dataclasses import replace
 
 import pytest
+from textual.events import MouseDown, MouseMove, MouseUp
 from textual.screen import Screen
 
 from myrtui import layout_state
@@ -28,6 +29,7 @@ from myrtui.client.app import (
     COMPACT_EXIT_HEIGHT,
     COMPACT_EXIT_WIDTH,
     ConfirmDialog,
+    MainScreen,
     TerminalApp,
     compact_for,
     resolve_compact_mode,
@@ -139,6 +141,15 @@ def _displayed_panes(app) -> list[str]:
         for slot in range(app_mod.MAX_PANES)
         if app.query_one(f"#pane-{slot}", PaneWidget).display
     ]
+
+
+def _mouse(cls, x: int, y: int, button: int = 1):
+    """屏幕坐标鼠标事件（Pilot.click 会把 MouseUp 固定回主屏，测不出真实时序）。"""
+    return cls(
+        widget=None, x=x, y=y, delta_x=0, delta_y=0, button=button,
+        shift=False, meta=False, ctrl=False,
+        screen_x=float(x), screen_y=float(y),
+    )
 
 
 # ---------- 1. 纯函数 ----------
@@ -335,6 +346,36 @@ def test_topbar_close_button_confirms_busy_pane(app_root):
             await pilot.press("escape")
             await pilot.pause(0.2)
             assert len(app._pane_ids) == 2
+    asyncio.run(scenario())
+
+
+def test_topbar_close_cancel_leaves_no_selection(app_root):
+    """点 `×` 弹确认框 → 取消：主屏不得停在选字状态（真实 MouseUp 在模态屏）。"""
+    async def scenario():
+        backend = FakeBackend(2)
+        backend.panes[0] = replace(backend.panes[0], command="vim")
+        app = _app(backend, app_root)
+        async with app.run_test(size=(46, 22)) as pilot:
+            await pilot.pause(0.4)
+            main = app.screen
+            btn = app.query_one("#btn-close", TopBarButton)
+            x, y = btn.region.x + 1, btn.region.y
+
+            main._forward_event(_mouse(MouseDown, x, y))
+            assert await _wait_until(
+                pilot, lambda: isinstance(app.screen, ConfirmDialog)
+            ), app.screen
+            app.screen._forward_event(_mouse(MouseUp, 1, 1))
+            await pilot.press("escape")
+            assert await _wait_until(
+                pilot, lambda: isinstance(app.screen, MainScreen)
+            )
+
+            assert main._selecting is False, "取消后主屏不得仍处于选字状态"
+            assert main._select_state is None
+            main._forward_event(_mouse(MouseMove, 5, 10))
+            await pilot.pause(0.1)
+            assert main.selections == {}, "移动鼠标不得画出选区"
     asyncio.run(scenario())
 
 

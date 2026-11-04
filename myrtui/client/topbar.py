@@ -45,6 +45,12 @@ class TopBarButton(Static):
 
     CAN_FOCUS = True
 
+    # 顶栏按钮不是可选文本。Static 默认 ALLOW_SELECT=True，Screen 会在
+    # MouseDown 时先建选区状态、再把事件转给按钮；而按钮的 Pressed 会立刻
+    # push 确认框，真实的 MouseUp 落到模态屏 → 主屏的 selecting 永远清不掉，
+    # 取消后鼠标一动就开始选字（0.10.0 真机：点 `×` / `Kill` 再取消）。
+    ALLOW_SELECT = False
+
     class Pressed(Message):
         def __init__(self, button_id: str):
             super().__init__()
@@ -98,6 +104,9 @@ class PaneTab(Static):
     """顶栏 pane 标签：显示 ``N:cmd``/``N:dead``，点击切焦点（等价 Ctrl-a N）。"""
 
     CAN_FOCUS = True
+
+    # 同理：tab 上按下不该起顶栏的文本选区（否则拖动时指针变文本光标）
+    ALLOW_SELECT = False
 
     class Pressed(Message):
         def __init__(self, index: int):
