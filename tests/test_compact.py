@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import replace
 
 import pytest
 from textual.screen import Screen
@@ -26,6 +27,7 @@ from myrtui.client.app import (
     COMPACT_ENTER_WIDTH,
     COMPACT_EXIT_HEIGHT,
     COMPACT_EXIT_WIDTH,
+    ConfirmDialog,
     TerminalApp,
     compact_for,
     resolve_compact_mode,
@@ -107,7 +109,8 @@ class FakeBackend:
         return "$new"
 
     def kill_window(self, window_id):
-        pass
+        # 真后端会关掉窗口；内存实现同样移除，_close_pane_now 的拓扑同步才有意义
+        self.panes = [p for p in self.panes if p.window_id != window_id]
 
     def respawn_pane(self, pane_id):
         pass
@@ -200,9 +203,12 @@ def test_compact_layout_hides_sidebar_and_extra_panes(app_root):
                            "#sep-rows-a", "#sep-rows-b"):
                 assert app.query_one(sep_id).display is False, sep_id
             assert app.query_one("#topbar-brand").display is False
-            # 压缩后的 `?` 仍在屏内（这是 0.9.x 的真机问题）
+            # 压缩后的 `?` 仍在屏内（这是 0.9.x 的真机问题）；`×` 也在
             help_btn = app.query_one("#btn-help", TopBarButton)
             assert help_btn.region.right <= 46
+            close_btn = app.query_one("#btn-close", TopBarButton)
+            assert close_btn.is_disabled is False
+            assert close_btn.region.right <= 46
             # tab 只留序号
             assert app.query_one("#tab-0")._body.strip() == "1"
     asyncio.run(scenario())
@@ -281,8 +287,59 @@ def test_compact_tab_switches_the_visible_pane(app_root):
     asyncio.run(scenario())
 
 
+def test_topbar_close_button_closes_the_active_pane(app_root):
+    """顶栏 `×` = Ctrl-a w：关掉当前 pane，按钮随拓扑保持可用（还有 2 个）。"""
+    async def scenario():
+        backend = FakeBackend(3)
+        app = _app(backend, app_root)
+        async with app.run_test(size=(46, 22)) as pilot:
+            await pilot.pause(0.4)
+            assert app._active_index == 0
+            await pilot.click("#btn-close")
+            assert await _wait_until(
+                pilot, lambda: len(app._pane_ids) == 2
+            ), app._pane_ids
+            assert app._active_index == 0
+            assert _displayed_panes(app) == ["#pane-0"]
+            assert app.query_one("#btn-close", TopBarButton).is_disabled is False
+    asyncio.run(scenario())
+
+
+def test_topbar_close_button_disabled_for_single_pane(app_root):
+    """只剩一个 pane 时 `×` 置灰（与 Ctrl-a w 的 no-op 一致），点击不动。"""
+    async def scenario():
+        app = _app(FakeBackend(1), app_root)
+        async with app.run_test(size=(46, 22)) as pilot:
+            await pilot.pause(0.4)
+            btn = app.query_one("#btn-close", TopBarButton)
+            assert btn.is_disabled is True
+            await pilot.click("#btn-close")
+            await pilot.pause(0.2)
+            assert len(app._pane_ids) == 1
+    asyncio.run(scenario())
+
+
+def test_topbar_close_button_confirms_busy_pane(app_root):
+    """`×` 复用 Ctrl-a w：前台有程序时先确认，Esc 取消不杀 pane。"""
+    async def scenario():
+        backend = FakeBackend(2)
+        backend.panes[0] = replace(backend.panes[0], command="vim")
+        app = _app(backend, app_root)
+        async with app.run_test(size=(46, 22)) as pilot:
+            await pilot.pause(0.4)
+            assert app._commands.get("%0") == "vim", app._commands
+            await pilot.click("#btn-close")
+            await pilot.pause(0.2)
+            assert isinstance(app.screen, ConfirmDialog), app.screen
+            assert len(app._pane_ids) == 2, "确认前不得关闭"
+            await pilot.press("escape")
+            await pilot.pause(0.2)
+            assert len(app._pane_ids) == 2
+    asyncio.run(scenario())
+
+
 def test_compact_sidebar_takes_the_whole_page(app_root):
-    """Ctrl-a b → 整页侧栏（pane 区隐藏、宽 == 屏宽、焦点在树）；Esc / 点 tab 返回。"""
+    """Ctrl-a b → 文件树整页（pane 区 / Git 块隐藏、宽 == 屏宽）；Esc / 点 tab 返回。"""
     async def scenario():
         app = _app(FakeBackend(2), app_root)
         async with app.run_test(size=(46, 22)) as pilot:
@@ -291,7 +348,7 @@ def test_compact_sidebar_takes_the_whole_page(app_root):
             await pilot.press("ctrl+a")
             await pilot.press("b")
             await pilot.pause(0.2)
-            assert app._compact_page is True
+            assert app._compact_page == "tree"
             assert app.query_one("#pane-container").display is False
             assert app.query_one("#sidebar").display is True
             sidebar = app.query_one("#sidebar")
@@ -299,11 +356,17 @@ def test_compact_sidebar_takes_the_whole_page(app_root):
                 pilot, lambda: sidebar.outer_size.width == 46
             ), sidebar.outer_size
             assert app.focused is not None and app.focused.id == "file-tree"
+            # 0.10.0 真机：两块各占整页——树 21 行才有空间弹右键菜单
+            assert app.query_one("#git-area").display is False
+            tree = app.query_one("#file-tree")
+            assert await _wait_until(
+                pilot, lambda: tree.outer_size.height == 21
+            ), tree.outer_size
 
             # Esc：回活动 pane，页面随之关闭
             await pilot.press("escape")
             await pilot.pause(0.2)
-            assert app._compact_page is False
+            assert app._compact_page is None
             assert app.query_one("#pane-container").display is True
             assert app.query_one("#pane-0", PaneWidget).display is True
             assert app.focused is app.query_one("#pane-0", PaneWidget)
@@ -312,14 +375,52 @@ def test_compact_sidebar_takes_the_whole_page(app_root):
             await pilot.press("ctrl+a")
             await pilot.press("b")
             await pilot.pause(0.2)
-            assert app._compact_page is True
+            assert app._compact_page == "tree"
             await pilot.click("#tab-1")
             assert await _wait_until(
-                pilot, lambda: app._compact_page is False and app._active_index == 1
+                pilot, lambda: app._compact_page is None and app._active_index == 1
             ), (app._compact_page, app._active_index)
             assert app.query_one("#pane-container").display is True
             assert _displayed_panes(app) == ["#pane-1"]
             assert app.focused is app.query_one("#pane-1", PaneWidget)
+    asyncio.run(scenario())
+
+
+def test_compact_git_page_shows_only_history(app_root):
+    """Ctrl-a g → Git 历史整页（树隐藏、历史拿满高）；Ctrl-a s 切回树页。"""
+    async def scenario():
+        app = _app(FakeBackend(2), app_root)
+        async with app.run_test(size=(46, 22)) as pilot:
+            await pilot.pause(0.4)
+
+            await pilot.press("ctrl+a")
+            await pilot.press("g")
+            await pilot.pause(0.2)
+            assert app._compact_page == "git"
+            assert app.query_one("#pane-container").display is False
+            assert app.query_one("#file-tree").display is False
+            git_area = app.query_one("#git-area")
+            assert git_area.display is True
+            assert await _wait_until(
+                pilot, lambda: git_area.outer_size.height == 21
+            ), git_area.outer_size
+            assert app.focused is not None and app.focused.id == "git-log"
+
+            # 两页互斥：Ctrl-a s 直接换成树页，焦点跟着走
+            await pilot.press("ctrl+a")
+            await pilot.press("s")
+            await pilot.pause(0.2)
+            assert app._compact_page == "tree"
+            assert app.query_one("#git-area").display is False
+            assert app.query_one("#file-tree").display is True
+            assert app.focused is not None and app.focused.id == "file-tree"
+
+            # Esc 回 pane，两块恢复（下次打开仍是完整侧栏）
+            await pilot.press("escape")
+            await pilot.pause(0.2)
+            assert app._compact_page is None
+            assert app.query_one("#file-tree").display is True
+            assert app.query_one("#git-area").display is True
     asyncio.run(scenario())
 
 
@@ -373,6 +474,9 @@ def test_regression_context_menu_clamped_in_compact_size(app_root):
         async with app.run_test(size=(40, 12)) as pilot:
             await pilot.pause(0.4)
             assert app._compact is True
+            # 5 个按钮 + 4 个 tab = 27 列，40 列下 `?` 仍在屏内
+            assert app.query_one("#btn-help").region.right <= 40
+            assert app.query_one("#btn-close").region.right <= 40
             app.push_screen(ContextMenuScreen([("copy_abs", "abs")], 999, 999))
             await pilot.pause(0.2)
             menu = app.screen.query_one("OptionList")

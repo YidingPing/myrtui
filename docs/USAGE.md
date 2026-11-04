@@ -101,12 +101,12 @@ myrtui stop [target]   # ask the front end to leave, then kill the session
 | `Ctrl-a 1..4` | focus pane N (out-of-range is ignored) |
 | `Ctrl-a w` | close the focused pane; asks first when a program is running (no-op when only one is left) |
 | `Ctrl-a r` | re-open a dead pane (focused pane first, else most recent death) |
-| `Ctrl-a b` | collapse / expand the sidebar (panes grow, tmux resizes with it) |
-| `Ctrl-a s` | focus the file tree |
-| `Ctrl-a g` | focus the git history panel |
+| `Ctrl-a b` | collapse / expand the sidebar (panes grow, tmux resizes with it); compact layout: open / close the file-tree page |
+| `Ctrl-a s` | focus the file tree (compact layout: open its full page) |
+| `Ctrl-a g` | focus the git history panel (compact layout: open its full page) |
 | `Ctrl-a c` | copy the current selection (drag-release already copies) |
 | `Ctrl-a v` | paste: system clipboard first, internal buffer as fallback |
-| `Ctrl-a ?` | toggle the shortcut overlay (same as hovering `?`) |
+| `Ctrl-a ?` | toggle the shortcut overlay (same as clicking or hovering `?`) |
 | `Esc` | sidebar → back to the active pane |
 | `Ctrl-a` then 1 s timeout | send a literal `Ctrl-a` to the inner shell |
 | anything else | passed straight to the inner shell |
@@ -147,15 +147,18 @@ injected with the encoding the program asked for (SGR 1006, otherwise the legacy
 
 Below 60 columns (or 16 rows) myrtui switches to a **compact layout**: the
 sidebar is hidden, only the focused pane is shown (without the 1-cell border),
-the tab strip is just `1 2 3 4`, and the top bar buttons shrink to `+ d k ?`.
-That keeps a 46×22 phone screen at one 46×21 pane instead of four 10-column
-ones. Moving back to a wider window restores the layout; the thresholds have
-hysteresis (enter below 60, leave at 64×18), so a soft keyboard appearing and
-disappearing does not flip the layout back and forth.
+the tab strip is just `1 2 3 4`, and the top bar buttons shrink to
+`+ × d k ?` (`×` closes the focused pane). That keeps a 46×22 phone screen at
+one 46×21 pane instead of four 10-column ones. Moving back to a wider window
+restores the layout; the thresholds have hysteresis (enter below 60, leave at
+64×18), so a soft keyboard appearing and disappearing does not flip the layout
+back and forth.
 
-- `Ctrl-a b` opens the sidebar as a **full page** (the pane area is hidden);
+- `Ctrl-a b` opens the **file tree** as a full page (the pane area is hidden);
   press it again, press `Esc`, or click a tab to return.
-- `Ctrl-a s` / `Ctrl-a g` open that page and focus the file tree / git history.
+- `Ctrl-a s` / `Ctrl-a g` open the file tree / git history, **each as its own
+  full page** — the other block is hidden, so the tree keeps the whole height
+  and context menus have room.
 - `Ctrl-a 1..4` or the tabs switch the visible pane. The hidden panes keep
   their tmux size until you switch back, then reflow once.
 - Splitter handles are hidden while compact; the ratios in `layout.json` are

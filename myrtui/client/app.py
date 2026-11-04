@@ -748,13 +748,14 @@ class TerminalApp(App, inherit_bindings=False):
         # ── 0.10.0 紧凑档（窄屏）──
         # _compact 只由视口尺寸 + MYRTUI_COMPACT 决定，**不落盘**（视口的函数，
         # 不是用户偏好）；_sidebar_want 记住桌面档下用户对侧栏的偏好，退出
-        # 紧凑时按它恢复；_compact_page = 紧凑档下「侧栏整页」是否打开；
-        # _compact_dirty = 预览层盖住主屏期间尺寸变了，回到主屏要补一次。
+        # 紧凑时按它恢复；_compact_page = 紧凑档下打开的整页（"tree" / "git" /
+        # None）——两块各占整页，树才有空间弹右键菜单；_compact_dirty = 预览层
+        # 盖住主屏期间尺寸变了，回到主屏要补一次。
         self._compact_mode: str = resolve_compact_mode(
             _os.environ.get("MYRTUI_COMPACT")
         )
         self._compact = False
-        self._compact_page = False
+        self._compact_page: str | None = None
         self._sidebar_want = True
         self._compact_dirty = False
         self._shell_names = set(SHELL_COMMANDS)
@@ -903,7 +904,7 @@ class TerminalApp(App, inherit_bindings=False):
         """
         count = len(self._pane_ids)
         active = min(self._active_index, max(0, count - 1))
-        page = self._compact and self._compact_page
+        page = self._compact and self._compact_page is not None
         if page:
             col_a = col_b = False
             visible: set[int] = set()
@@ -1018,7 +1019,7 @@ class TerminalApp(App, inherit_bindings=False):
         self._active_index = index
         # 紧凑档的侧栏整页开着时，先关页面再聚焦（页面关闭本身不碰焦点，
         # 由这里决定——避免 _set_active ↔ 关页面互相递归）。
-        self._set_compact_page(False)
+        self._set_compact_page(None)
         # 紧凑档单 pane 视图：活动槽换了 → 可见槽跟着换（桌面档是幂等的）
         self._apply_pane_visibility()
         self.query_one(f"#pane-{index}", PaneWidget).focus()
@@ -1148,8 +1149,8 @@ class TerminalApp(App, inherit_bindings=False):
             width, height = self.size.width, self.size.height
         compact = compact_for(width, height, self._compact, self._compact_mode)
         if compact != self._compact and not compact:
-            # 退出紧凑 → 整页侧栏复位；桌面档按 _sidebar_want 恢复可见性
-            self._compact_page = False
+            # 退出紧凑 → 整页复位；桌面档按 _sidebar_want 恢复可见性
+            self._compact_page = None
         self._compact = compact
         self.screen.set_class(compact, "compact")
         self._apply_sidebar_visibility()
@@ -1168,49 +1169,82 @@ class TerminalApp(App, inherit_bindings=False):
 
         ``action_toggle_sidebar`` / ``action_focus_sidebar`` /
         ``action_focus_git_log`` 都走这里，避免三处各写一遍 display。
-        分隔线显隐一并刷新（侧栏藏起来时 sep-main / sep-tree 也得藏）。
+        侧栏内部两块（树 / 历史）由 ``_apply_sidebar_blocks`` 负责；分隔线
+        显隐一并刷新（侧栏藏起来时 sep-main / sep-tree 也得藏）。
         """
         sidebar = self._sidebar()
-        show_sidebar = self._compact_page if self._compact else self._sidebar_want
-        show_panes = not (self._compact and self._compact_page)
+        page = self._compact and self._compact_page is not None
+        show_sidebar = page if self._compact else self._sidebar_want
+        show_panes = not page
         if sidebar.display != show_sidebar:
             sidebar.display = show_sidebar
         container = self.query_one("#pane-container")
         if container.display != show_panes:
             container.display = show_panes
+        self._apply_sidebar_blocks()
         self._sync_separators()
 
-    def _set_compact_page(self, page: bool) -> None:
-        """紧凑档下开关「侧栏整页」；桌面档 no-op。
+    def _apply_sidebar_blocks(self) -> None:
+        """侧栏内部两块（文件树 / Git 历史）的显隐。
 
-        打开时焦点给文件树（否则焦点留在一个已隐藏的 pane 上，键全丢）；
+        紧凑档的整页一次只放一块：树拿满 21 行才有空间弹右键菜单（真机
+        反馈：分栏时树只剩约 10 行，菜单被下半屏挤）。无页面 / 桌面档两块
+        都显示——比例仍是 50fr 对 50fr，隐藏一块后另一块自动归一化为 100%，
+        ``layout.json`` 不参与。
+        """
+        tree = self.query_one("#file-tree")
+        git_area = self.query_one("#git-area")
+        tree_shown = not (self._compact and self._compact_page == "git")
+        git_shown = not (self._compact and self._compact_page == "tree")
+        if tree.display != tree_shown:
+            tree.display = tree_shown
+        if git_area.display != git_shown:
+            git_area.display = git_shown
+
+    def _focus_git_log(self) -> bool:
+        """焦点给 Git 历史面板；pane 未挂载（teardown 竞态）→ False。"""
+        try:
+            self.query_one("#git-log", GitLogPanel).focus()
+        except NoMatches:
+            return False
+        return True
+
+    def _set_compact_page(self, page: str | None) -> None:
+        """紧凑档下开关侧栏整页（``"tree"`` / ``"git"`` / None）；桌面档 no-op。
+
+        打开时焦点给对应面板（否则焦点留在一个已隐藏的 pane 上，键全丢）；
         关闭只改可见性——由调用方决定焦点去哪（``_set_active`` 随后聚焦
         活动 pane），避免与 ``_set_active`` 互相递归。
         """
-        page = bool(page) and self._compact
+        if not self._compact or page not in ("tree", "git"):
+            page = None
         if self._compact_page == page:
             return
         self._compact_page = page
         self._apply_sidebar_visibility()
         self._apply_pane_visibility()
-        if page:
+        if page == "tree":
             self.query_one("#file-tree", FileTree).focus()
+        elif page == "git":
+            self._focus_git_log()
 
     def action_toggle_sidebar(self) -> None:
         """Ctrl-a b：折叠 / 展开侧栏（紧凑档 = 打开 / 关闭整页侧栏）。
 
         桌面档折叠后 pane 变宽 → Textual 的 resize 事件 → ``resize-window``
         联动自动生效（§9 验收 8）。紧凑档下 20 列的文件树没意义，改成整页：
-        侧栏占满全宽、pane 区隐藏；再按一次（或 Esc / 点 tab）返回。
+        无页面时打开**文件树**页（默认入口），已有页面（树或 Git）时关闭；
+        ``Esc`` / 点 tab 同样返回。
         """
         if self._compact:
-            self._set_compact_page(not self._compact_page)
-            if self._compact_page:
-                self._refresh_status()
-                self._refresh_git_log()  # 打开页面立刻补一次历史
-                self._sidebar().refresh_file_status()
-            else:
+            if self._compact_page is not None:
+                self._set_compact_page(None)
                 self._focus_active_pane()
+                return
+            self._set_compact_page("tree")
+            self._refresh_status()
+            self._refresh_git_log()  # 打开页面立刻补一次历史
+            self._sidebar().refresh_file_status()
             return
         self._sidebar_want = not self._sidebar_want
         self._apply_sidebar_visibility()
@@ -1225,26 +1259,26 @@ class TerminalApp(App, inherit_bindings=False):
         """Ctrl-a s：焦点移入侧栏（文件树）。
 
         键盘用户进入侧栏的唯一入口（无鼠标环境下树的键盘导航否则不可达）。
-        与 ``Esc`` 互逆，构成「进侧栏 ↔ 回终端」的一对键。紧凑档先开整页，
-        再给焦点。
+        与 ``Esc`` 互逆，构成「进侧栏 ↔ 回终端」的一对键。紧凑档打开
+        **文件树整页**（与 ``Ctrl-a g`` 的 Git 页互斥）。
         """
         if self._compact:
-            self._set_compact_page(True)
-        else:
-            if not self._sidebar_want:
-                self._sidebar_want = True
-                self._apply_sidebar_visibility()
+            self._set_compact_page("tree")
+        elif not self._sidebar_want:
+            self._sidebar_want = True
+            self._apply_sidebar_visibility()
         self.query_one("#file-tree", FileTree).focus()
         self._refresh_status()
 
     def action_focus_git_log(self) -> None:
         """Ctrl-a g：焦点移入侧栏的 Git 历史面板（v0.22）。
 
-        与 ``Ctrl-a s``（文件树）对称。紧凑档先开整页；侧栏折叠时先展开并
-        补一次取数；面板只读——↑↓ 移动高亮，``Esc`` 回当前活动 pane。
+        与 ``Ctrl-a s``（文件树）对称。紧凑档打开 **Git 历史整页**（树隐藏，
+        历史拿满高度）；侧栏折叠时先展开并补一次取数；面板只读——↑↓ 移动
+        高亮，``Esc`` 回当前活动 pane。
         """
         if self._compact:
-            self._set_compact_page(True)
+            self._set_compact_page("git")
             self._refresh_git_log()
             self._sidebar().refresh_file_status()
         elif not self._sidebar_want:
@@ -1252,9 +1286,7 @@ class TerminalApp(App, inherit_bindings=False):
             self._apply_sidebar_visibility()
             self._refresh_git_log()
             self._sidebar().refresh_file_status()
-        try:
-            self.query_one("#git-log", GitLogPanel).focus()
-        except NoMatches:
+        if not self._focus_git_log():
             return  # teardown 竞态（同 _focus_active_pane 的兜底口径）
         self._refresh_status()
 
@@ -2776,6 +2808,12 @@ class TerminalApp(App, inherit_bindings=False):
                 self._mouse_down_pane = None
                 self._mouse_down_forwarded = False
                 return
+            if self._help_button_contains(event.screen_x, event.screen_y):
+                # 0.10.0：`?` 自己就是开关。这里先收起、按钮的 Pressed 又
+                # 打开 = 永远关不掉（真机反馈）——让它走按钮的 toggle。
+                self._mouse_down_pane = None
+                self._mouse_down_forwarded = False
+                return
             self._hide_shortcut_help()
         # 提交详情卡片是屏幕级浮层：点卡片内部是「开始选字」，不能被分隔线
         # ±1 热区截成拖拽；点卡片外则顺手关掉卡片（有选区时也不留浮层）。
@@ -3221,13 +3259,16 @@ class TerminalApp(App, inherit_bindings=False):
     def on_top_bar_button_pressed(self, event: TopBarButton.Pressed) -> None:
         if event.button_id == "btn-new":
             self.action_new_pane()
+        elif event.button_id == "btn-close":
+            self.action_close_pane()
         elif event.button_id == "btn-detach":
             self.action_detach()
         elif event.button_id == "btn-kill":
             self.action_kill()
         elif event.button_id == "btn-help":
-            # 悬停是主入口；点击也立刻展开（触控/手快时不用等 0.15s）
-            self._show_shortcut_help()
+            # 悬停是桌面入口；点击在两种设备上都应是**开关**（0.10.0 真机：
+            # 手机上浮层占大半屏，点 `?` 关不掉就只能点边缘）。
+            self._toggle_shortcut_help()
         if self._active_pane is not None:
             self.query_one(
                 f"#pane-{min(self._active_index, len(self._pane_ids) - 1)}",
@@ -3321,6 +3362,17 @@ class TerminalApp(App, inherit_bindings=False):
             HELP_HIDE_GRACE, self._hide_shortcut_help_if_unhovered
         )
 
+    def _help_button_contains(self, x: float, y: float) -> bool:
+        """屏幕坐标是否落在 `?` 按钮上（关浮层的两条路径共用）。
+
+        teardown 竞态（按钮已拆）→ False，按「不在按钮上」处理。
+        """
+        try:
+            btn = self.query_one("#btn-help", TopBarButton)
+        except NoMatches:
+            return False
+        return btn.region.contains(x, y)
+
     def _hide_shortcut_help_if_unhovered(self) -> None:
         self._help_hide_timer = None
         if self._help_pinned:
@@ -3331,11 +3383,7 @@ class TerminalApp(App, inherit_bindings=False):
         pos = self.mouse_position
         if panel.region.contains(*pos):
             return  # 已移进浮层
-        try:
-            btn = self.query_one("#btn-help", TopBarButton)
-        except NoMatches:
-            btn = None
-        if btn is not None and btn.region.contains(*pos):
+        if self._help_button_contains(*pos):
             return
         panel.display = False
 

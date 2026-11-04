@@ -165,6 +165,45 @@ def test_click_help_button_opens_panel_without_waiting_hover_delay(monkeypatch):
     asyncio.run(scenario())
 
 
+def test_click_help_button_again_closes_panel():
+    """0.10.0 真机：`?` 是开关——第二次点击必须收起（手机上没有方便的“点外面”）。
+
+    改前失败路径：``App.on_mouse_down`` 先把「点在浮层外」当关闭，紧接着
+    ``TopBarButton.Pressed`` 又 ``_show_shortcut_help()`` → 永远关不掉。
+    """
+    async def scenario():
+        app = TerminalApp(_FakeBackend(1), _root())
+        async with app.run_test(size=(46, 22)) as pilot:
+            await pilot.pause(0.4)
+            panel = app.query_one("#shortcut-help", ShortcutHelp)
+            await pilot.click("#btn-help")
+            await pilot.pause(0.1)
+            assert panel.display, "第一次点击应打开"
+            await pilot.click("#btn-help")
+            await pilot.pause(0.1)
+            assert not panel.display, "第二次点击应收起"
+            assert app._help_pinned is False
+    asyncio.run(scenario())
+
+
+def test_click_help_button_after_hover_closes(monkeypatch):
+    """桌面：悬停已经打开时，点 `?` 也应是收起（同一套开关语义）。"""
+    _fast(monkeypatch)
+
+    async def scenario():
+        app = TerminalApp(_FakeBackend(1), _root())
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.3)
+            panel = app.query_one("#shortcut-help", ShortcutHelp)
+            await pilot.hover("#btn-help")
+            await pilot.pause(0.1)
+            assert panel.display
+            await pilot.click("#btn-help")
+            await pilot.pause(0.1)
+            assert not panel.display
+    asyncio.run(scenario())
+
+
 def test_help_panel_stays_on_screen_in_narrow_terminal(monkeypatch):
     _fast(monkeypatch)
 

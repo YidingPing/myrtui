@@ -33,6 +33,7 @@ BRAND_TEXT = f"myrtui {__version__}"
 # 0.10.0 紧凑档按钮文案：`d`/`k` 与 `Ctrl-a d/k` 同字母（`k` 仍有二次确认）
 COMPACT_BUTTON_TEXTS = {
     "btn-new": " + ",
+    "btn-close": " × ",
     "btn-detach": " d ",
     "btn-kill": " k ",
     "btn-help": " ? ",
@@ -142,6 +143,7 @@ class TopBar(Static):
         for i in range(MAX_TABS):
             yield PaneTab(i)
         yield TopBarButton(" + ", "btn-new")
+        yield TopBarButton(" × ", "btn-close")
         yield TopBarButton(f" {t('topbar.detach')} ", "btn-detach")
         yield TopBarButton(f" {t('topbar.kill')} ", "btn-kill")
         yield TopBarButton(" ? ", "btn-help")
@@ -181,6 +183,11 @@ class TopBar(Static):
         want_disabled = len(self._labels) >= MAX_TABS
         if new_btn.is_disabled != want_disabled:
             new_btn.set_disabled(want_disabled)
+        # 关闭当前 pane：只剩一个时 no-op（与 Ctrl-a w 一致），按钮同步置灰
+        close_btn = self.query_one("#btn-close", TopBarButton)
+        close_disabled = len(self._labels) <= 1
+        if close_btn.is_disabled != close_disabled:
+            close_btn.set_disabled(close_disabled)
 
     def set_compact(self, compact: bool) -> None:
         """切紧凑档的顶栏形态（幂等；App._apply_compact 调用）。
@@ -196,6 +203,7 @@ class TopBar(Static):
             if compact
             else {
                 "btn-new": " + ",
+                "btn-close": " × ",
                 "btn-detach": f" {t('topbar.detach')} ",
                 "btn-kill": f" {t('topbar.kill')} ",
                 "btn-help": " ? ",
