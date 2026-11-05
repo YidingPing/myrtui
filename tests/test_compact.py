@@ -367,12 +367,12 @@ def test_compact_tab_switches_the_visible_pane(app_root):
             assert app._active_index == 2
 
             # 新可见的槽位收到一次内容区尺寸（紧凑档无边框 → 46×18：
-            # 顶栏 1 行 + 底栏 3 行）
+            # 顶栏 1 行 + 防误触空行 1 行 + 底栏 3 行）
             assert await _wait_until(
                 pilot, lambda: any(w == "$w2" for w, _c, _r in backend.resize_calls)
             ), backend.resize_calls
             sizes = [(c, r) for w, c, r in backend.resize_calls if w == "$w2"]
-            assert sizes == [(46, 18)], sizes
+            assert sizes == [(46, 17)], sizes
     asyncio.run(scenario())
 
 
@@ -476,11 +476,11 @@ def test_compact_sidebar_takes_the_whole_page(app_root):
             ), sidebar.outer_size
             assert app.focused is not None and app.focused.id == "file-tree"
             # 0.10.0 真机：两块各占整页——树要足够高才弹得开右键菜单；
-            # 0.11.0 起顶栏 1 行、底栏 3 行 → 22 - 1 - 3 = 18
+            # 0.11.0 起顶栏 1 行 + 空行 1 行、底栏 3 行 → 22 - 1 - 1 - 3 = 17
             assert app.query_one("#git-area").display is False
             tree = app.query_one("#file-tree")
             assert await _wait_until(
-                pilot, lambda: tree.outer_size.height == 18
+                pilot, lambda: tree.outer_size.height == 17
             ), tree.outer_size
 
             # Esc：回活动 pane，页面随之关闭
@@ -522,7 +522,7 @@ def test_compact_git_page_shows_only_history(app_root):
             git_area = app.query_one("#git-area")
             assert git_area.display is True
             assert await _wait_until(
-                pilot, lambda: git_area.outer_size.height == 18
+                pilot, lambda: git_area.outer_size.height == 17
             ), git_area.outer_size
             assert app.focused is not None and app.focused.id == "git-log"
 
@@ -551,7 +551,7 @@ def test_compact_drops_pane_border_and_restores_it(app_root):
         async with app.run_test(size=(46, 22)) as pilot:
             await pilot.pause(0.4)
             pane = app.query_one("#pane-0", PaneWidget)
-            assert (pane.outer_size.width, pane.outer_size.height) == (46, 18)
+            assert (pane.outer_size.width, pane.outer_size.height) == (46, 17)
             assert pane.content_size == pane.outer_size
 
             await pilot.resize_terminal(100, 30)
@@ -623,7 +623,26 @@ def test_compact_bars_are_tall_enough_to_tap(app_root):
             assert chip.region.size == (CHIP_WIDTH, CHIP_HEIGHT)
             assert chip.region.x == 0, "键行靠左，右侧留白"
             assert app.query_one("#btn-help", TopBarButton).region.height == 1
-            assert app.query_one("#pane-0", PaneWidget).outer_size.height == 18
+            assert app.query_one("#pane-0", PaneWidget).outer_size.height == 17
+    asyncio.run(scenario())
+
+
+def test_compact_topbar_gap_absorbs_mis_taps(app_root):
+    """顶栏与 pane 之间留 1 行空：点偏到那一行不会落进 opencode 的标签栏。"""
+    async def scenario():
+        backend = FakeBackend(1)
+        app = _app(backend, app_root)
+        async with app.run_test(size=(46, 22)) as pilot:
+            await pilot.pause(0.4)
+            pane = app.query_one("#pane-0", PaneWidget)
+            assert pane.region.y == 2, "顶栏 1 行 + 1 行防误触空行"
+            # 空行属于 Screen 背景：按下 / 抬起都不转发给内层终端。
+            screen = app.screen
+            screen._forward_event(_mouse(MouseDown, 10, 1))
+            screen._forward_event(_mouse(MouseUp, 10, 1))
+            await pilot.pause(0.2)
+            assert backend.sent_keys == []
+            assert backend.sent_text == []
     asyncio.run(scenario())
 
 
@@ -697,20 +716,20 @@ def test_keybar_toggle_hides_and_restores_rows(app_root):
             pane = app.query_one("#pane-0", PaneWidget)
             button = app.query_one("#btn-keybar", TopBarButton)
             assert bar.display is True
-            assert pane.outer_size.height == 18
+            assert pane.outer_size.height == 17
             assert button.has_class("active")
 
             await pilot.click("#btn-keybar")
             assert await _wait_until(pilot, lambda: bar.display is False)
             assert await _wait_until(
-                pilot, lambda: pane.outer_size.height == 21
+                pilot, lambda: pane.outer_size.height == 20
             ), pane.outer_size
             assert not button.has_class("active")
 
             await pilot.click("#btn-keybar")
             assert await _wait_until(pilot, lambda: bar.display is True)
             assert await _wait_until(
-                pilot, lambda: pane.outer_size.height == 18
+                pilot, lambda: pane.outer_size.height == 17
             ), pane.outer_size
             assert button.has_class("active")
     asyncio.run(scenario())
@@ -729,7 +748,7 @@ def test_keybar_off_gives_the_row_back(app_root, monkeypatch):
             assert app.query_one("#btn-keybar", TopBarButton).display is False
             assert app.query_one("#topbar").outer_size.height == 1
             pane = app.query_one("#pane-0", PaneWidget)
-            assert (pane.outer_size.width, pane.outer_size.height) == (46, 21)
+            assert (pane.outer_size.width, pane.outer_size.height) == (46, 20)
             assert pane.content_size == pane.outer_size
     asyncio.run(scenario())
 
@@ -827,7 +846,7 @@ def test_keybar_chip_closes_the_shortcut_help(app_root):
             await pilot.click("#btn-help")
             panel = app.query_one("#shortcut-help")
             assert panel.display is True
-            assert panel.region.y == 1, "紧凑档浮层应贴在 1 行顶栏下沿"
+            assert panel.region.y == 2, "紧凑档浮层应贴在顶栏 + 防误触空行之下"
             assert panel.region.bottom <= app.query_one("#keybar").region.y
 
             before = len(backend.sent_keys)
@@ -988,7 +1007,7 @@ def test_topbar_toggle_in_page_keeps_tree_focus(app_root):
             assert app._compact_page == "tree"
             assert app.focused is tree
             assert await _wait_until(
-                pilot, lambda: tree.outer_size.height == 21
+                pilot, lambda: tree.outer_size.height == 20
             ), tree.outer_size
 
             await pilot.click("#btn-keybar")
@@ -996,7 +1015,7 @@ def test_topbar_toggle_in_page_keeps_tree_focus(app_root):
             assert app._compact_page == "tree"
             assert app.focused is tree
             assert await _wait_until(
-                pilot, lambda: tree.outer_size.height == 18
+                pilot, lambda: tree.outer_size.height == 17
             ), tree.outer_size
     asyncio.run(scenario())
 

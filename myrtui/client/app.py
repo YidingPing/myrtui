@@ -657,6 +657,10 @@ class TerminalApp(App, inherit_bindings=False):
        - 单 pane 视图下边框没有分隔作用（焦点由顶栏 active tab 表示），
          去掉白赚 2 列 2 行；`:focus` 那条要显式压过 PaneWidget.DEFAULT_CSS
          的 heavy 边框，否则聚焦时又长回来。 */
+    /* 紧凑档顶栏与 pane 之间留 1 行空：手指点偏一点会落到这条空行，
+       而不是 opencode 自己的标签栏。空行是 Screen 背景，不属于任何 pane，
+       按下不会转发给内层终端。 */
+    Screen.compact #topbar { margin-bottom: 1; }
     Screen.compact #topbar-brand { display: none; }
     Screen.compact PaneWidget { border: none; }
     Screen.compact PaneWidget:focus { border: none; }
@@ -3468,10 +3472,11 @@ class TerminalApp(App, inherit_bindings=False):
         except NoMatches:
             x = 0
         x = max(0, min(x, self.screen.size.width - width))
-        # 0.11.0：紧凑档顶栏 1 行、底栏 3 行——浮层从顶栏下沿开始，
-        # 并把高度扣到底栏之上，避免盖住触摸按钮。
+        # 0.11.0：紧凑档顶栏下面还有 1 行防误触空行（CSS margin-bottom），
+        # 浮层从空行下方开始；底栏 3 行也一并扣掉，避免盖住触摸按钮。
         try:
-            top = max(1, self.query_one(TopBar).region.bottom)
+            gap = 1 if self._compact else 0
+            top = max(1, self.query_one(TopBar).region.bottom + gap)
             keybar = self.query_one("#keybar", KeyBar)
             reserved = keybar.outer_size.height if keybar.display else 0
         except NoMatches:

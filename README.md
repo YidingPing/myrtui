@@ -79,7 +79,8 @@ one pane at a time (no border), the sidebar hidden, the tab strip reduced to
 the same for the git history). A three-row-tall key bar at the bottom is tuned
 for AI coding TUIs: `ESC`, `ENT`, `⇧ ⇥` (Shift+Tab), `/`, `@`, `↑`, `↓`, `C-J`
 (newline) and `DEL`; every key is 3×3 cells, the row is left-aligned so there
-is room for more keys later, and a tap flashes the key. The
+is room for more keys later, and a tap flashes the key. A blank row separates
+the top bar from the pane, so a near miss does not land in the terminal. The
 `KEY` button in the top bar toggles it for the current run. See
 [On a phone](docs/USAGE.md#on-a-phone). `MYRTUI_COMPACT=off` keeps the old
 layout at any size; `MYRTUI_KEYBAR=off` disables the key bar permanently.

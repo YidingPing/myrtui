@@ -154,10 +154,12 @@ Below 60 columns (or 16 rows) myrtui switches to a **compact layout**: the
 sidebar is hidden, only the focused pane is shown (without the 1-cell border),
 the tab strip is just `1 2 3 4`, and the top bar buttons shrink to
 `+ X D K KEY ?` (`X` closes the focused pane, `KEY` toggles the key bar). The
-top bar stays **one row tall**; the key bar is **three rows tall**, with
-3×3-cell keys and 1-cell gaps laid out from the left (the right side stays
-empty for future keys), so a 46×22 phone screen is one 46×18 pane instead of
-four 10-column ones (46×21 with the key bar hidden). Moving back to a wider
+top bar stays **one row tall**, and a blank row separates it from the pane so
+a slightly-off tap does not land in the terminal (for example opencode's own
+tab strip). The key bar is **three rows tall**, with 3×3-cell keys and 1-cell
+gaps laid out from the left (the right side stays empty for future keys), so a
+46×22 phone screen is one 46×17 pane instead of four 10-column ones (46×20
+with the key bar hidden). Moving back to a wider
 window restores the layout; the thresholds have hysteresis (enter below 60,
 leave at 64×18), so a soft keyboard appearing and disappearing does not flip the
 layout back and forth.
