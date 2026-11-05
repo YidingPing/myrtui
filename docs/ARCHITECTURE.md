@@ -42,7 +42,7 @@ without interpreting a single cell.
 | `fileview.py` | decoding a preview (UTF-8-SIG → UTF-8 → locale → replace), size/line limits, binary detection |
 | `mouse.py` | mouse event decoding and routing (SGR/legacy), drag selection, click-vs-drag arbitration |
 | `client/app.py` | the App: CSS, focus model, `Ctrl-a` prefix state machine, pane layouts, compact (narrow-screen) mode, polling loop, clipboard actions |
-| `client/keybar.py` | compact layout's one-row touch key strip: 3-cell keys + 1-cell gaps, context sets (AI-coding keys / tree navigation / Git details via Enter), width/priority fitting, `MYRTUI_KEYBAR=off`; delegates to `app._dispatch_key` / `_dispatch_page_action` |
+| `client/keybar.py` | compact layout's three-row touch key strip: 3×3-cell keys + 1-cell gaps, left-aligned, context sets (AI-coding keys / tree navigation / Git details via Enter), width/priority fitting, `MYRTUI_KEYBAR=off`; delegates to `app._dispatch_key` / `_dispatch_page_action` |
 | `client/pane_widget.py` | one widget per pane: renders captured text, dead-pane styling, focus border |
 | `client/separators.py` | splitter hit areas (±1 cell), drag/double-click reset, ratio persistence |
 | `client/sidebar.py` / `file_tree.py` / `git_panel.py` | left column: tree with git colours + commit history with hover details |

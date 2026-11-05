@@ -1,6 +1,6 @@
-"""窄屏底栏：按上下文切换的 1 行快捷按钮（0.11.0）。
+"""窄屏底栏：按上下文切换的 3 行高快捷按钮（0.11.0）。
 
-为什么做这一行：手机软键盘上按 ``Esc`` / ``Enter`` / ``Shift-Tab`` 要先呼出
+为什么做这条底栏：手机软键盘上按 ``Esc`` / ``Enter`` / ``Shift-Tab`` 要先呼出
 键盘，慢且经常来不及；各手机终端自带的 extra keys 行又「少这少那」。底栏只做
 **跨终端一致、按当前页面取键** 的一层：
 
@@ -9,8 +9,10 @@
 - 文件树整页：``ESC`` / ``↑`` / ``↓`` / ``ENT`` / ``≡``（Space，打开菜单）；
 - Git 历史整页：``ESC`` / ``↑`` / ``↓`` / ``ENT``（显示 / 收起提交详情）。
 
-每个键固定 3 cell 宽，标签最多 3 个字符；键之间留 1 cell 空隙，避免
-``ESCENT`` 粘在一起。单字符标签在 3 cell 里居中，3 字符标签正好填满。
+每个键固定 3 cell 宽 × 3 行高，标签最多 3 个字符；键之间留 1 cell 空隙，
+避免 ``ESCENT`` 粘在一起。单字符标签在 3×3 里水平 / 垂直居中，3 字符标签
+正好填满宽度。真机反馈 3 cell 宽的单行键仍然太小（49 列屏上约 24pt），
+所以高度加到 3 行，触控目标变成 3×3；整条靠左排列，右侧留白给后续加键。
 应用动作（文件树、复制、respawn 等）不塞进 pane 行：顶栏已有
 ``+ X D K ?``，其余走 ``?`` 浮层，避免和外部键行、顶栏三处重复。
 
@@ -32,6 +34,8 @@ from myrtui.i18n import t
 
 #: 每个键的内容宽（cell）；``KeyChip`` 的 CSS 宽度同此值。
 CHIP_WIDTH = 3
+#: 每个键的高度（行）；3 行才够手指点，CSS 高度同此值。
+CHIP_HEIGHT = 3
 #: 键与键之间的空隙（cell）；在 CSS 里用 ``margin-right`` 实现。
 CHIP_GAP = 1
 
@@ -147,7 +151,7 @@ def fit_chip_ids(available: int, context: str = "pane") -> tuple[str, ...]:
 
 
 class KeyChip(Static):
-    """1 行高、按下即发的底栏按钮。
+    """3 行高、按下即发的底栏按钮（整块 3×3 都是热区）。
 
     与 ``TopBarButton`` 同样的触屏口径：``ALLOW_SELECT = False``（否则
     Screen 会先建选区，后续 MouseUp 又可能落到别的屏）＋ ``MouseDown``
@@ -245,5 +249,6 @@ class KeyBar(Horizontal):
         for spec in ALL_CHIPS:
             chip = self.query_one(f"#key-chip-{spec.id}", KeyChip)
             chip.display = spec.id in visible
-            # 最后一个可见键不留右侧空隙，整行才是真正居中（否则右多 1 格）。
+            # 最后一个可见键不留右侧空隙：左对齐时它只在精确宽度下才有意义，
+            # 留着会让 35 列的 9 键行在 35 列屏上多占 1 格而被裁掉。
             chip.styles.margin = (0, 0 if spec.id == last else CHIP_GAP, 0, 0)

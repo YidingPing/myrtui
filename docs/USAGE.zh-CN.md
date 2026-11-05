@@ -101,7 +101,7 @@ window/pane 创建时快照选项，`Ctrl-a r` 重开的也是建窗时记录的
 |---|---|
 | `MYRTUI_LANG` | 界面语言：`en`（默认）/ `zh_CN`。优先级：`--lang` > `MYRTUI_LANG` > `config.json` 的 `lang` > `LC_ALL`/`LANG` 是否 `zh*` > `en`；改完重启生效。 |
 | `MYRTUI_COMPACT` | 窄屏布局：`auto`（默认）= 宽 < 60 列或高 < 16 行进入紧凑档、宽 >= 64 且高 >= 18 才退出（带滞回，软键盘弹收不来回闪）；`on` 强制紧凑；`off` 保持旧布局。 |
-| `MYRTUI_KEYBAR` | 紧凑档单行触摸底栏（3 cell 键 + 1 cell 空隙）：pane 里是 AI coding 键，文件树 / Git 整页换成导航 / `≡` / `ENT`；点按闪 150 ms；顶栏 `KEY` 只开关本次运行；`off` 永久关闭（`KEY` 一起隐藏）。 |
+| `MYRTUI_KEYBAR` | 紧凑档 3 行高触摸底栏（3×3 cell 键 + 1 cell 空隙，靠左）：pane 里是 AI coding 键，文件树 / Git 整页换成导航 / `≡` / `ENT`；点按闪 150 ms；顶栏 `KEY` 只开关本次运行；`off` 永久关闭（`KEY` 一起隐藏）。 |
 | `MYRTUI_IDLE_INTERVAL` | 空闲轮询间隔（秒，float，默认 `0.15`；非法/非正值回落默认，合法值夹取 `0.05–5.0`）。画面持续变化时（`tail -f`、图像动画）myrtui 自己提到约 17 次/秒，静止后回落，不必手动调。多实例时给**后台/次要实例**降频：`MYRTUI_IDLE_INTERVAL=0.5 myrtui`（空闲抓屏 6.7 → 2 次/s，系统级 fork 与 CPU 同降；显式调大后不再自动提频）。活跃实例保持默认即可。 |
 | `MYRTUI_TRANSPORT` | tmux 传输方式：`auto`（默认，常驻 `tmux -C` 客户端；建不起来时自动回落逐次起进程）/ `exec`（每次调用起一个 tmux 进程，旧路径）/ `control`（强制常驻，建不起来直接报错）。非法值告警后按 `auto`。 |
 | `MYRTUI_LOG` | TUI 接管终端后 warning 写到哪里（默认平台日志目录：macOS `~/Library/Logs/myrtui/myrtui.log`、Linux `~/.local/state/myrtui/log/`）；空串 = 不落盘。启动前的 CLI 错误仍走 stderr。 |
@@ -166,7 +166,7 @@ myrtui stop [目标]   # 结束实例：请前端干净退场后 kill tmux 会�
 | `Ctrl-a` 后超时 1s | 把 `Ctrl-a` 本身发给内层 shell |
 | 其他一切键 | 直接透传给内层 shell（方向键的 DECCKM 由 tmux 自决） |
 
-紧凑档底部是单行常用键栏：pane 里发送 `ESC` / `ENT` / `⇧ ⇥` / `/` / `@` /
+紧凑档底部是 3 行高的常用键栏：pane 里发送 `ESC` / `ENT` / `⇧ ⇥` / `/` / `@` /
 `↑` / `↓` / `C-J` / `DEL`；文件树和 Git 整页会换成各自的按钮。
 顶栏 `KEY` 只开关本次运行；`MYRTUI_KEYBAR=off` 永久关闭。
 
@@ -283,10 +283,11 @@ S="$HOME/Library/Application Support/UURemote/tmux.sock"
 
 不足 60 列（或不足 16 行）时自动切到**紧凑档**：侧栏收起、只显示当前 pane
 （去掉 1 cell 边框）、顶栏 tab 只留 `1 2 3 4`、按钮压成 `+ X D K KEY ?`
-（`X` 关闭当前 pane，`KEY` 开关底栏）。两条栏都是**单行**；底栏是居中的
-3 cell 键 + 1 cell 空隙：46×22 的手机竖屏因此是一个 46×20 的 pane，而不是
-四块 10 列的「看不清」（关掉底栏后回到 46×21）。窗口变宽后自动恢复；阈值带
-滞回（进 < 60，退 >= 64×18），软键盘反复弹收不会来回切布局。
+（`X` 关闭当前 pane，`KEY` 开关底栏）。顶栏仍是**单行**；底栏是 **3 行高**、
+每键 3×3 cell + 1 cell 空隙，靠左排列（右侧留白，以后加键）：46×22 的手机
+竖屏因此是一个 46×18 的 pane，而不是四块 10 列的「看不清」（关掉底栏后
+回到 46×21）。窗口变宽后自动恢复；阈值带滞回（进 < 60，退 >= 64×18），
+软键盘反复弹收不会来回切布局。
 
 底栏按 **AI coding** 选键：
 
@@ -301,9 +302,10 @@ S="$HOME/Library/Application Support/UURemote/tmux.sock"
 | `C-J` | Ctrl-J | 换行不发送（所有终端都可用） |
 | `DEL` | Backspace | 纠正误点的前缀 |
 
-每个键 3 cell 宽，点按闪 150 ms accent。极窄屏按优先级从尾部丢键（pane 行
-含空隙共 35 cell；40/49 列显示全部 9 个）。`Tab`、`Ctrl-C`、左右方向键刻意
-不放——它们要么仍然需要键盘输入，要么与 `ESC` 重叠。
+每个键 3×3 cell（整块都是热区），点按闪 150 ms accent。极窄屏按优先级
+从尾部丢键（pane 行含空隙共 35 cell；40/49 列显示全部 9 个，30 列仍能
+放 7 个）。`Tab`、`Ctrl-C`、左右方向键刻意不放——它们要么仍然需要键盘
+输入，要么与 `ESC` 重叠。
 
 紧凑档打开**文件树整页**时，底栏换成 `ESC` / `↑` / `↓` / `ENT` / `≡`
 （Space，打开右键菜单）。`ENT` 保持键盘语义：文件行选中 + 弹菜单，目录行

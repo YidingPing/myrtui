@@ -111,7 +111,7 @@ myrtui stop [target]   # ask the front end to leave, then kill the session
 | `Ctrl-a` then 1 s timeout | send a literal `Ctrl-a` to the inner shell |
 | anything else | passed straight to the inner shell |
 
-In the compact layout the single-row bottom bar sends `ESC`, `ENT`, `⇧ ⇥`,
+In the compact layout the three-row-tall bottom bar sends `ESC`, `ENT`, `⇧ ⇥`,
 `/`, `@`, `↑`, `↓`, `C-J` and `DEL` with one tap; the
 file-tree and Git pages switch it to their own buttons. `KEY` toggles it for the
 current run; `MYRTUI_KEYBAR=off` disables it permanently.
@@ -153,10 +153,11 @@ injected with the encoding the program asked for (SGR 1006, otherwise the legacy
 Below 60 columns (or 16 rows) myrtui switches to a **compact layout**: the
 sidebar is hidden, only the focused pane is shown (without the 1-cell border),
 the tab strip is just `1 2 3 4`, and the top bar buttons shrink to
-`+ X D K KEY ?` (`X` closes the focused pane, `KEY` toggles the key bar). Both
-bars are **one row tall**; the key bar is a centered strip of 3-cell keys with
-1-cell gaps, so a 46×22 phone screen is one 46×20 pane instead of four
-10-column ones (46×21 with the key bar hidden). Moving back to a wider
+`+ X D K KEY ?` (`X` closes the focused pane, `KEY` toggles the key bar). The
+top bar stays **one row tall**; the key bar is **three rows tall**, with
+3×3-cell keys and 1-cell gaps laid out from the left (the right side stays
+empty for future keys), so a 46×22 phone screen is one 46×18 pane instead of
+four 10-column ones (46×21 with the key bar hidden). Moving back to a wider
 window restores the layout; the thresholds have hysteresis (enter below 60,
 leave at 64×18), so a soft keyboard appearing and disappearing does not flip the
 layout back and forth.
@@ -174,11 +175,11 @@ The key bar is tuned for AI coding TUIs:
 | `C-J` | Ctrl-J | newline without submitting (works in every terminal) |
 | `DEL` | Backspace | fix a mistyped prefix |
 
-Each key is 3 cells wide and flashes accent for 150 ms when tapped. Buttons are
-dropped from the tail by priority on very narrow screens (the full pane row is
-35 cells including gaps; 40/49 columns show all 9). `Tab`, `Ctrl-C` and the
-left/right arrows are intentionally absent: they either need typing anyway or
-overlap with `ESC`.
+Each key is 3×3 cells (the whole block is the hit area) and flashes accent for
+150 ms when tapped. Keys are dropped from the tail by priority on very narrow
+screens (the full pane row is 35 cells including gaps; 40/49 columns show all
+9, 30 columns still fit 7). `Tab`, `Ctrl-C` and the left/right arrows are
+intentionally absent: they either need typing anyway or overlap with `ESC`.
 
 In a compact **file-tree page** the bar switches to `ESC` / `↑` / `↓` / `ENT` /
 `≡` (Space, opens the context menu). `ENT` keeps the keyboard semantics: a file
@@ -464,7 +465,7 @@ the outer tmux's own drag-to-copy is gone.
 |---|---|---|
 | `MYRTUI_LANG` | `en` | UI language: `en` / `zh_CN`. Also read from `config.json`'s `lang` and from a `zh*` locale; `--lang` wins for one run |
 | `MYRTUI_COMPACT` | `auto` | narrow-screen layout: `auto` enters the compact layout below 60 columns / 16 rows and leaves at 64×18 (hysteresis); `on` forces it, `off` keeps the old layout |
-| `MYRTUI_KEYBAR` | `auto` | compact-layout touch bar (one row, 3-cell keys with 1-cell gaps): AI-coding keys in a pane, navigation / `≡` / `ENT` in the tree and Git pages; keys flash for 150 ms; `KEY` toggles it for the current run; `off` disables it permanently (and hides `KEY`) |
+| `MYRTUI_KEYBAR` | `auto` | compact-layout touch bar (3 rows tall, 3×3-cell keys with 1-cell gaps, left-aligned): AI-coding keys in a pane, navigation / `≡` / `ENT` in the tree and Git pages; keys flash for 150 ms; `KEY` toggles it for the current run; `off` disables it permanently (and hides `KEY`) |
 | `MYRTUI_EDITOR` | — | editor for "Open" (see resolution order above) |
 | `MYRTUI_IDLE_INTERVAL` | `0.15` | idle capture interval in seconds (clamped to `0.05–5.0`); while content keeps changing the loop speeds up to ~17 Hz by itself; raise it for secondary instances (`MYRTUI_IDLE_INTERVAL=0.5 myrtui`) |
 | `MYRTUI_TRANSPORT` | `auto` | tmux transport: `auto` = a resident `tmux -C` client, falling back to one process per call when attach fails; `exec` = one process per call (old path); `control` = require the resident client (errors out if it cannot start) |

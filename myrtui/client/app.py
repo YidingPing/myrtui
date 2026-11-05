@@ -588,20 +588,21 @@ class TerminalApp(App, inherit_bindings=False):
     }
     #shortcut-help-body { width: 1fr; height: auto; }
     #main { layout: horizontal; height: 1fr; }
-    /* 0.11.0 窄屏底栏：1 行、每个键 3 cell + 1 cell 空隙，整行居中。
-       深灰底与终端黑背景区分；显示由 set_visible 控制。 */
+    /* 0.11.0 窄屏底栏：3 行高、每键 3 cell 宽 × 3 行高 + 1 cell 空隙。
+       靠左排列，右侧留白（以后加键不用重排）。栏底比键暗一档，3 行才看得出
+       键的边界；显示由 set_visible 控制。 */
     #keybar {
-        height: 1;
+        height: 3;
         layout: horizontal;
-        align: center middle;
-        background: #333333;
+        align: left middle;
+        background: #2b2b2b;
     }
     #keybar KeyChip {
         width: 3;
-        height: 1;
+        height: 3;
         padding: 0;
         content-align: center middle;
-        background: #333333;
+        background: #3a3a3a;
         color: #f0f0f0;
         text-style: bold;
     }
@@ -3467,7 +3468,7 @@ class TerminalApp(App, inherit_bindings=False):
         except NoMatches:
             x = 0
         x = max(0, min(x, self.screen.size.width - width))
-        # 0.11.0：紧凑档顶栏 2 行、底栏 2 行——浮层从顶栏下沿开始，
+        # 0.11.0：紧凑档顶栏 1 行、底栏 3 行——浮层从顶栏下沿开始，
         # 并把高度扣到底栏之上，避免盖住触摸按钮。
         try:
             top = max(1, self.query_one(TopBar).region.bottom)

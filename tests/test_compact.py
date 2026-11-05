@@ -39,6 +39,8 @@ from myrtui.client.app import (
 from myrtui.client.context_menu import ContextMenuScreen
 from myrtui.client.git_panel import CommitCard, GitLogPanel
 from myrtui.client.keybar import (
+    CHIP_HEIGHT,
+    CHIP_WIDTH,
     CONTEXTS,
     KeyBar,
     KeyChip,
@@ -364,13 +366,13 @@ def test_compact_tab_switches_the_visible_pane(app_root):
             assert app.query_one("#pane-0", PaneWidget).display is False
             assert app._active_index == 2
 
-            # 新可见的槽位收到一次内容区尺寸（紧凑档无边框 → 46×20：
-            # 顶栏 1 行 + 底栏 1 行）
+            # 新可见的槽位收到一次内容区尺寸（紧凑档无边框 → 46×18：
+            # 顶栏 1 行 + 底栏 3 行）
             assert await _wait_until(
                 pilot, lambda: any(w == "$w2" for w, _c, _r in backend.resize_calls)
             ), backend.resize_calls
             sizes = [(c, r) for w, c, r in backend.resize_calls if w == "$w2"]
-            assert sizes == [(46, 20)], sizes
+            assert sizes == [(46, 18)], sizes
     asyncio.run(scenario())
 
 
@@ -474,11 +476,11 @@ def test_compact_sidebar_takes_the_whole_page(app_root):
             ), sidebar.outer_size
             assert app.focused is not None and app.focused.id == "file-tree"
             # 0.10.0 真机：两块各占整页——树要足够高才弹得开右键菜单；
-            # 0.11.0 起顶栏 1 行、底栏 1 行 → 22 - 1 - 1 = 20
+            # 0.11.0 起顶栏 1 行、底栏 3 行 → 22 - 1 - 3 = 18
             assert app.query_one("#git-area").display is False
             tree = app.query_one("#file-tree")
             assert await _wait_until(
-                pilot, lambda: tree.outer_size.height == 20
+                pilot, lambda: tree.outer_size.height == 18
             ), tree.outer_size
 
             # Esc：回活动 pane，页面随之关闭
@@ -520,7 +522,7 @@ def test_compact_git_page_shows_only_history(app_root):
             git_area = app.query_one("#git-area")
             assert git_area.display is True
             assert await _wait_until(
-                pilot, lambda: git_area.outer_size.height == 20
+                pilot, lambda: git_area.outer_size.height == 18
             ), git_area.outer_size
             assert app.focused is not None and app.focused.id == "git-log"
 
@@ -549,7 +551,7 @@ def test_compact_drops_pane_border_and_restores_it(app_root):
         async with app.run_test(size=(46, 22)) as pilot:
             await pilot.pause(0.4)
             pane = app.query_one("#pane-0", PaneWidget)
-            assert (pane.outer_size.width, pane.outer_size.height) == (46, 20)
+            assert (pane.outer_size.width, pane.outer_size.height) == (46, 18)
             assert pane.content_size == pane.outer_size
 
             await pilot.resize_terminal(100, 30)
@@ -608,36 +610,40 @@ def test_keybar_visible_only_in_compact(app_root):
     asyncio.run(scenario())
 
 
-def test_compact_bars_are_single_row(app_root):
-    """紧凑档顶栏 / 底栏 / 键都只有 1 行；文字直接在行内。"""
+def test_compact_bars_are_tall_enough_to_tap(app_root):
+    """顶栏 1 行；底栏 3 行，键是 3×3，靠左排列。"""
     async def scenario():
         app = _app(FakeBackend(1), app_root)
         async with app.run_test(size=(46, 22)) as pilot:
             await pilot.pause(0.4)
             bar = app.query_one("#keybar", KeyBar)
             assert app.query_one("#topbar").outer_size.height == 1
-            assert bar.outer_size.height == 1
-            assert app.query_one("#key-chip-esc", KeyChip).region.height == 1
+            assert bar.outer_size.height == 3
+            chip = app.query_one("#key-chip-esc", KeyChip)
+            assert chip.region.size == (CHIP_WIDTH, CHIP_HEIGHT)
+            assert chip.region.x == 0, "键行靠左，右侧留白"
             assert app.query_one("#btn-help", TopBarButton).region.height == 1
-            assert app.query_one("#pane-0", PaneWidget).outer_size.height == 20
+            assert app.query_one("#pane-0", PaneWidget).outer_size.height == 18
     asyncio.run(scenario())
 
 
 def test_compact_bars_use_grey_keycaps(app_root):
-    """灰底 + 粗体；3 cell 键宽，文字在唯一一行里。"""
+    """灰底 + 粗体；3×3 键，标签在中间那行。"""
     async def scenario():
         app = _app(FakeBackend(1), app_root)
         async with app.run_test(size=(46, 22)) as pilot:
             await pilot.pause(0.4)
-            grey = Color.parse("#333333")
-            assert app.query_one("#topbar").styles.background == grey
-            assert app.query_one("#keybar", KeyBar).styles.background == grey
+            top_grey = Color.parse("#333333")
+            bar_grey = Color.parse("#2b2b2b")
+            key_grey = Color.parse("#3a3a3a")
+            assert app.query_one("#topbar").styles.background == top_grey
+            assert app.query_one("#keybar", KeyBar).styles.background == bar_grey
 
             tab = app.query_one("#tab-0")
             chip = app.query_one("#key-chip-esc", KeyChip)
             button = app.query_one("#btn-help", TopBarButton)
-            assert button.styles.background == grey
-            assert chip.styles.background == grey
+            assert button.styles.background == top_grey
+            assert chip.styles.background == key_grey
             assert tab.styles.text_style.bold
             assert chip.styles.text_style.bold
             assert button.styles.text_style.bold
@@ -648,8 +654,10 @@ def test_compact_bars_use_grey_keycaps(app_root):
             chip_lines = chip.render_lines(
                 Region(0, 0, chip.outer_size.width, chip.outer_size.height)
             )
-            assert chip_lines[0].text.strip() == "ESC"
-            assert chip.outer_size.width == 3
+            assert chip_lines[1].text.strip() == "ESC"
+            assert chip_lines[0].text.strip() == ""
+            assert chip_lines[2].text.strip() == ""
+            assert chip.outer_size == (CHIP_WIDTH, CHIP_HEIGHT)
     asyncio.run(scenario())
 
 
@@ -661,7 +669,8 @@ def test_press_flashes_keycap_and_topbar_button(app_root):
             await pilot.pause(0.4)
             main = app.screen
             chip = app.query_one("#key-chip-esc", KeyChip)
-            x, y = chip.region.x + 1, chip.region.y
+            # 点最底那一行：3 行高的键整块都是热区，不只是第一行。
+            x, y = chip.region.x + 1, chip.region.y + 2
             main._forward_event(_mouse(MouseDown, x, y))
             await pilot.pause(0.05)
             assert chip.has_class("flash")
@@ -679,7 +688,7 @@ def test_press_flashes_keycap_and_topbar_button(app_root):
 
 
 def test_keybar_toggle_hides_and_restores_rows(app_root):
-    """顶栏 ``KEY``：隐藏底栏 → pane 多 1 行；再点恢复。"""
+    """顶栏 ``KEY``：隐藏底栏 → pane 多 3 行；再点恢复。"""
     async def scenario():
         app = _app(FakeBackend(1), app_root)
         async with app.run_test(size=(46, 22)) as pilot:
@@ -688,7 +697,7 @@ def test_keybar_toggle_hides_and_restores_rows(app_root):
             pane = app.query_one("#pane-0", PaneWidget)
             button = app.query_one("#btn-keybar", TopBarButton)
             assert bar.display is True
-            assert pane.outer_size.height == 20
+            assert pane.outer_size.height == 18
             assert button.has_class("active")
 
             await pilot.click("#btn-keybar")
@@ -701,7 +710,7 @@ def test_keybar_toggle_hides_and_restores_rows(app_root):
             await pilot.click("#btn-keybar")
             assert await _wait_until(pilot, lambda: bar.display is True)
             assert await _wait_until(
-                pilot, lambda: pane.outer_size.height == 20
+                pilot, lambda: pane.outer_size.height == 18
             ), pane.outer_size
             assert button.has_class("active")
     asyncio.run(scenario())
@@ -986,6 +995,9 @@ def test_topbar_toggle_in_page_keeps_tree_focus(app_root):
             assert await _wait_until(pilot, lambda: bar.display is True)
             assert app._compact_page == "tree"
             assert app.focused is tree
+            assert await _wait_until(
+                pilot, lambda: tree.outer_size.height == 18
+            ), tree.outer_size
     asyncio.run(scenario())
 
 
