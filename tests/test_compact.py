@@ -1033,7 +1033,10 @@ def test_keybar_drops_low_priority_chips_at_30_cols(app_root):
             assert app.query_one("#key-chip-backspace", KeyChip).display is True
             assert app.query_one("#key-chip-up", KeyChip).display is False
             assert app.query_one("#key-chip-down", KeyChip).display is False
-            # 4 tab + 6 个 3-cell 按钮 = 30 cell，30 列刚好全在屏内
+            # 4 tab + 6 个 3-cell 按钮 = 30 cell，30 列刚好全在屏内；
+            # B / G 放不下就整对隐藏，不能挤掉现有的 ?。
+            assert app.query_one("#btn-tree", TopBarButton).display is False
+            assert app.query_one("#btn-git", TopBarButton).display is False
             for btn_id in ("#btn-keybar", "#btn-help"):
                 btn = app.query_one(btn_id, TopBarButton)
                 assert btn.region.right <= 30, (btn_id, btn.region)
@@ -1041,15 +1044,55 @@ def test_keybar_drops_low_priority_chips_at_30_cols(app_root):
 
 
 def test_compact_topbar_fits_40_cols(app_root):
-    """顶栏 30 cell；40 列留出状态位，全部按钮在屏内。"""
+    """顶栏 36 cell；40 列仍留出状态位，8 个按钮全在屏内。"""
     async def scenario():
         app = _app(FakeBackend(1), app_root)
         async with app.run_test(size=(40, 22)) as pilot:
             await pilot.pause(0.4)
             assert app._compact is True
-            for btn_id in ("#btn-keybar", "#btn-help"):
+            for btn_id in ("#btn-tree", "#btn-git", "#btn-keybar", "#btn-help"):
                 btn = app.query_one(btn_id, TopBarButton)
+                assert btn.display is True, btn_id
                 assert btn.region.right <= 40, (btn_id, btn.region)
+    asyncio.run(scenario())
+
+
+def test_topbar_tree_and_git_buttons_open_and_close_pages(app_root):
+    """顶栏 B / G：直接开整页，再点关闭；对应按钮加 active 底色。"""
+    async def scenario():
+        app = _app(FakeBackend(2), app_root)
+        async with app.run_test(size=(49, 23)) as pilot:
+            await pilot.pause(0.4)
+            tree_btn = app.query_one("#btn-tree", TopBarButton)
+            git_btn = app.query_one("#btn-git", TopBarButton)
+            assert tree_btn.display is True and git_btn.display is True
+
+            await pilot.click("#btn-tree")
+            assert await _wait_until(pilot, lambda: app._compact_page == "tree")
+            assert app.focused is app.query_one("#file-tree")
+            assert tree_btn.has_class("active")
+
+            await pilot.click("#btn-git")
+            assert await _wait_until(pilot, lambda: app._compact_page == "git")
+            assert app.focused is not None and app.focused.id == "git-log"
+            assert git_btn.has_class("active") and not tree_btn.has_class("active")
+
+            await pilot.click("#btn-git")
+            assert await _wait_until(pilot, lambda: app._compact_page is None)
+            assert not git_btn.has_class("active")
+            assert app.focused is app.query_one("#pane-0", PaneWidget)
+    asyncio.run(scenario())
+
+
+def test_page_buttons_hidden_outside_compact(app_root):
+    """桌面档侧栏常显，B / G 不占顶栏（也不改变原有按钮顺序）。"""
+    async def scenario():
+        app = _app(FakeBackend(1), app_root)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause(0.4)
+            assert app._compact is False
+            assert app.query_one("#btn-tree", TopBarButton).display is False
+            assert app.query_one("#btn-git", TopBarButton).display is False
     asyncio.run(scenario())
 
 

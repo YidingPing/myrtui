@@ -238,6 +238,10 @@ MESSAGES: dict[str, str] = {
     "app.close_confirm_busy_unknown": "关闭这个 pane？这里有程序仍在运行。",
     "app.close_confirm_yes": "关闭",
     "app.close_confirm_no": "取消",
+    "topbar.tree": "B",
+    "topbar.git": "G",
+    "topbar.tree_tip": "文件树（Ctrl-a b）",
+    "topbar.git_tip": "Git 历史（Ctrl-a g）",
     "topbar.detach": "分离",
     "topbar.kill": "结束",
     # ---- 窄屏底栏 -----------------------------------------------------------

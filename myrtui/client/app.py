@@ -555,6 +555,8 @@ class TerminalApp(App, inherit_bindings=False):
     #topbar TopBarButton.disabled { color: #888888; }
     /* 0.11.0：底栏开关只在紧凑档出现；初始隐藏，App 用内联 display 打开。 */
     #topbar #btn-keybar { display: none; }
+    /* 文件树 / Git 整页按钮同理；窄到放不下时 TopBar 保持隐藏。 */
+    #topbar #btn-tree, #topbar #btn-git { display: none; }
     #topbar TopBarButton.active { background: $accent; color: #111111; }
     #topbar PaneTab {
         width: auto;
@@ -1233,6 +1235,7 @@ class TerminalApp(App, inherit_bindings=False):
             self._compact and self._keybar_mode != "off",
             self._keybar_on,
         )
+        topbar.set_page_state(self._compact_page if self._compact else None)
 
     def _apply_sidebar_visibility(self) -> None:
         """按紧凑档 / 整页 / 桌面偏好设侧栏与 pane 区的 display。
@@ -1367,6 +1370,34 @@ class TerminalApp(App, inherit_bindings=False):
             return
         self._keybar_on = not self._keybar_on
         self._apply_keybar_visibility()
+
+    def action_show_tree(self) -> None:
+        """顶栏 ``B``：打开文件树（整页已开则收起，退回 pane）。
+
+        桌面档隐藏了这个按钮；万一被调用，就与 ``Ctrl-a s`` 同义。
+        """
+        if not self._compact:
+            self.action_focus_sidebar()
+            return
+        if self._compact_page == "tree":
+            self._set_compact_page(None)
+            self._focus_active_pane()
+            return
+        self._set_compact_page("tree")
+        self._refresh_status()
+        self._refresh_git_log()
+        self._sidebar().refresh_file_status()
+
+    def action_show_git(self) -> None:
+        """顶栏 ``G``：打开 Git 历史（整页已开则收起，退回 pane）。"""
+        if not self._compact:
+            self.action_focus_git_log()
+            return
+        if self._compact_page == "git":
+            self._set_compact_page(None)
+            self._focus_active_pane()
+            return
+        self.action_focus_git_log()
 
     # ---------- 分隔线与布局比例（v0.11） ----------
 
@@ -3351,6 +3382,13 @@ class TerminalApp(App, inherit_bindings=False):
             self.action_detach()
         elif event.button_id == "btn-kill":
             self.action_kill()
+        elif event.button_id == "btn-tree":
+            # 整页按钮：打开后焦点归树，不能被末尾的「聚焦 pane」抢走。
+            self.action_show_tree()
+            return
+        elif event.button_id == "btn-git":
+            self.action_show_git()
+            return
         elif event.button_id == "btn-keybar":
             # 紧凑档整页打开时焦点在树上：这里不能被末尾的「聚焦 pane」
             # 抢走，否则树页还在、键盘却回到了隐藏的 pane。

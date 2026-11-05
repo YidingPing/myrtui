@@ -9,10 +9,12 @@ Enter/Leave 转成 ``HoverStart`` / ``HoverEnd`` 消息（所有按钮通用，A
 关心 ``btn-help``），避免 topbar 直接依赖 App 的私有方法。
 
 0.10.0 紧凑档（``set_compact``）：tab 只留序号（``1 2 3``），按钮文案压成
-``+ X D K KEY ?``，品牌由 CSS 隐藏（``Screen.compact #topbar-brand``）。0.11.0 增加
-``KEY`` 开关（底栏显隐），紧凑顶栏仍为 1 行：宽度 = 4×3 + 6×3 = 30 列，
-40 列屏还剩 10 格给状态。46 列上 `?` 被挤出屏外是 0.9.x 的真机问题（见内部
-0.10.0 计划 §0）。
+``+ X D K B G KEY ?``，品牌由 CSS 隐藏（``Screen.compact #topbar-brand``）。
+``B`` / ``G`` 分别直开文件树 / Git 历史整页（0.11.0，手机上不必再按
+``Ctrl-a b`` / ``Ctrl-a g``）；窄到放不下时整对隐藏，不挤掉 ``?``。
+0.11.0 增加 ``KEY`` 开关（底栏显隐），紧凑顶栏仍为 1 行：宽度 =
+4×3 + 8×3 = 36 列，40 列屏还剩 4 格给状态。46 列上 `?` 被挤出屏外是
+0.9.x 的真机问题（见内部 0.10.0 计划 §0）。
 """
 from __future__ import annotations
 
@@ -32,7 +34,8 @@ MAX_TABS = 4
 # 顶栏右上角品牌：程序名 + 包版本（源码真值；发版时与 pyproject 同步 bump）
 BRAND_TEXT = f"myrtui {__version__}"
 
-# 0.10.0 紧凑档按钮文案：`D`/`K` 与 `Ctrl-a d/k` 同字母（`K` 仍有二次确认）
+# 0.10.0 紧凑档按钮文案：`D`/`K` 与 `Ctrl-a d/k` 同字母（`K` 仍有二次确认），
+# 0.11.0 的 `B`/`G` 与 `Ctrl-a b/g` 同字母。
 COMPACT_BUTTON_TEXTS = {
     "btn-new": " + ",
     "btn-close": " X ",
@@ -41,6 +44,12 @@ COMPACT_BUTTON_TEXTS = {
     "btn-keybar": "KEY",
     "btn-help": " ? ",
 }
+
+#: 紧凑档每个 tab / 按钮都占 3 cell（tab 是 ``" N "``，按钮是 3 字符）；
+#: 用来判断一行放不放得下整对页面按钮。
+COMPACT_CELL_WIDTH = 3
+#: 紧凑档顶栏的按钮总数（``+ X D K B G KEY ?``）。
+COMPACT_BUTTON_COUNT = 8
 
 
 class TopBarButton(Static):
@@ -159,6 +168,12 @@ class TopBar(Static):
         yield TopBarButton(" × ", "btn-close")
         yield TopBarButton(f" {t('topbar.detach')} ", "btn-detach")
         yield TopBarButton(f" {t('topbar.kill')} ", "btn-kill")
+        tree_btn = TopBarButton(f" {t('topbar.tree')} ", "btn-tree")
+        tree_btn.tooltip = t("topbar.tree_tip")
+        yield tree_btn
+        git_btn = TopBarButton(f" {t('topbar.git')} ", "btn-git")
+        git_btn.tooltip = t("topbar.git_tip")
+        yield git_btn
         keybar_btn = TopBarButton(t("keybar.toggle"), "btn-keybar")
         keybar_btn.tooltip = t("keybar.toggle_tip")
         yield keybar_btn
@@ -176,6 +191,7 @@ class TopBar(Static):
         self._deads = list(deads)
         self._active = active
         self._render_tabs()
+        self._fit_page_buttons()
 
     def _render_tabs(self) -> None:
         """按缓存拓扑渲染 tab（``set_tabs`` 与 ``set_compact`` 共用的出口）。"""
@@ -229,6 +245,34 @@ class TopBar(Static):
         for button_id, text in texts.items():
             self.query_one(f"#{button_id}", TopBarButton).update(text)
         self._render_tabs()
+        self._fit_page_buttons()
+
+    def _fit_page_buttons(self, width: int | None = None) -> None:
+        """紧凑档放得下才显示文件树 / Git 按钮（0.11.0）。
+
+        一行放不下时 Textual 会静默裁掉尾部（0.9.x 真机：46 列丢了 ``?``），
+        所以先按 tab 数算总宽，放不下就**整对隐藏**——宁可少两个入口，也不
+        把现有的 ``?`` / ``KEY`` 挤出去。桌面上它们本来就不需要（侧栏常显）。
+        """
+        if width is None:
+            width = self.size.width or self.screen.size.width
+        needed = (len(self._labels) + COMPACT_BUTTON_COUNT) * COMPACT_CELL_WIDTH
+        show = self._compact and width >= needed
+        for button_id in ("btn-tree", "btn-git"):
+            button = self.query_one(f"#{button_id}", TopBarButton)
+            if button.display != show:
+                button.display = show
+
+    def set_page_state(self, page: str | None) -> None:
+        """整页打开时给对应按钮加 ``active`` 底色（再点一次即关闭）。"""
+        for button_id, own in (("btn-tree", "tree"), ("btn-git", "git")):
+            self.query_one(f"#{button_id}", TopBarButton).set_class(
+                page == own, "active"
+            )
+
+    def on_resize(self, event: events.Resize) -> None:
+        """宽度变化 → 重算页面按钮放不放得下（幂等）。"""
+        self._fit_page_buttons(event.size.width)
 
     def set_keybar_control(self, visible: bool, on: bool) -> None:
         """显示 / 隐藏顶栏 ``KEY`` 开关，并同步「底栏开着」的底色。"""

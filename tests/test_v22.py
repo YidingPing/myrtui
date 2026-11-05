@@ -132,8 +132,10 @@ def test_help_button_sits_right_of_kill():
             await pilot.pause(0.3)
             ids = [child.id for child in app.query_one(TopBar).children]
             assert "btn-help" in ids
-            # 0.11.0：KEY 开关插在 Kill 与 ? 之间。
-            assert ids.index("btn-keybar") == ids.index("btn-kill") + 1
+            # 0.11.0：B / G / KEY 依次插在 Kill 与 ? 之间。
+            assert ids.index("btn-tree") == ids.index("btn-kill") + 1
+            assert ids.index("btn-git") == ids.index("btn-tree") + 1
+            assert ids.index("btn-keybar") == ids.index("btn-git") + 1
             assert ids.index("btn-help") == ids.index("btn-keybar") + 1
 
     asyncio.run(scenario())

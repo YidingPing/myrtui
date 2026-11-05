@@ -153,7 +153,10 @@ injected with the encoding the program asked for (SGR 1006, otherwise the legacy
 Below 60 columns (or 16 rows) myrtui switches to a **compact layout**: the
 sidebar is hidden, only the focused pane is shown (without the 1-cell border),
 the tab strip is just `1 2 3 4`, and the top bar buttons shrink to
-`+ X D K KEY ?` (`X` closes the focused pane, `KEY` toggles the key bar). The
+`+ X D K B G KEY ?` (`X` closes the focused pane, `B` / `G` open the file tree /
+Git history as full pages — tap the lit one again to close it — and `KEY`
+toggles the key bar). Four tabs plus eight buttons need 36 cells; on a narrower
+screen `B` / `G` hide as a pair rather than pushing `?` off the edge. The
 top bar stays **one row tall**, and a blank row separates it from the pane so
 a slightly-off tap does not land in the terminal (for example opencode's own
 tab strip). The key bar is **three rows tall**, with 3×3-cell keys and 1-cell

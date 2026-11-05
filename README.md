@@ -81,7 +81,8 @@ for AI coding TUIs: `ESC`, `ENT`, `⇧ ⇥` (Shift+Tab), `/`, `@`, `↑`, `↓`,
 (newline) and `DEL`; every key is 3×3 cells, the row is left-aligned so there
 is room for more keys later, and a tap flashes the key. A blank row separates
 the top bar from the pane, so a near miss does not land in the terminal. The
-`KEY` button in the top bar toggles it for the current run. See
+`KEY` button in the top bar toggles it for the current run, and `B` / `G` open
+the file tree / Git history as full pages without touching the keyboard. See
 [On a phone](docs/USAGE.md#on-a-phone). `MYRTUI_COMPACT=off` keeps the old
 layout at any size; `MYRTUI_KEYBAR=off` disables the key bar permanently.
 
