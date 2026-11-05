@@ -247,6 +247,19 @@ MESSAGES: dict[str, str] = {
     # （" Detach " 8 cell vs " 分离 " 6 cell），见 tests/test_i18n.py 的 80 列用例。
     "topbar.detach": "Detach",
     "topbar.kill": "Kill",
+    # ---- narrow-screen key bar ---------------------------------------------
+    "keybar.esc": "ESC",
+    "keybar.enter": "ENT",
+    "keybar.shift_tab": "⇧ ⇥",
+    "keybar.slash": "/",
+    "keybar.at": "@",
+    "keybar.up": "↑",
+    "keybar.down": "↓",
+    "keybar.newline": "C-J",
+    "keybar.backspace": "DEL",
+    "keybar.menu": "≡",
+    "keybar.toggle": "KEY",
+    "keybar.toggle_tip": "show / hide the key bar",
 
 }
 

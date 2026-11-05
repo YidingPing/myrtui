@@ -203,7 +203,7 @@ def test_no_module_level_t_call() -> None:
 # ------------------------------------------------- 英文裸串（0.5.1）
 
 #: 首个位置参数是「用户可见文案」的控件构造函数。
-TEXT_WIDGETS = {"Button", "Checkbox", "Label", "Static", "TopBarButton"}
+TEXT_WIDGETS = {"Button", "Checkbox", "Label", "Static", "TopBarButton", "KeyChip"}
 
 #: 允许的非常量文案：纯符号（` + `、` ? `）、空串。汉字不在这个豁免里——
 #: 它们归上一条守卫管，两条一起才能盖住「中文没走词表」和「英文没走词表」。

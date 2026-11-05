@@ -76,8 +76,12 @@ What a phone or tablet terminal costs you is the **bitmaps**, not the preview:
 Narrow screens (below 60 columns) switch to a **compact layout** automatically:
 one pane at a time (no border), the sidebar hidden, the tab strip reduced to
 `1 2 3 4`, and `Ctrl-a b` opening the file tree as a full page (`Ctrl-a g` does
-the same for the git history). See [On a phone](docs/USAGE.md#on-a-phone).
-`MYRTUI_COMPACT=off` keeps the old layout at any size.
+the same for the git history). A single-row key bar at the bottom is tuned for
+AI coding TUIs: `ESC`, `ENT`, `⇧ ⇥` (Shift+Tab), `/`, `@`, `↑`, `↓`, `C-J`
+(newline) and `DEL`; each key is 3 cells wide and flashes when tapped. The
+`KEY` button in the top bar toggles it for the current run. See
+[On a phone](docs/USAGE.md#on-a-phone). `MYRTUI_COMPACT=off` keeps the old
+layout at any size; `MYRTUI_KEYBAR=off` disables the key bar permanently.
 
 ## Install
 

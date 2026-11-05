@@ -18,7 +18,9 @@ import time
 from dataclasses import replace
 
 import pytest
+from textual.color import Color
 from textual.events import MouseDown, MouseMove, MouseUp
+from textual.geometry import Region
 from textual.screen import Screen
 
 from myrtui import layout_state
@@ -35,8 +37,17 @@ from myrtui.client.app import (
     resolve_compact_mode,
 )
 from myrtui.client.context_menu import ContextMenuScreen
+from myrtui.client.git_panel import CommitCard, GitLogPanel
+from myrtui.client.keybar import (
+    CONTEXTS,
+    KeyBar,
+    KeyChip,
+    fit_chip_ids,
+    resolve_keybar_mode,
+)
 from myrtui.client.pane_widget import PaneWidget
 from myrtui.client.topbar import BRAND_TEXT, TopBarButton
+from myrtui.gitlog import Commit
 from myrtui.tmux_backend import CaptureResult, PaneInfo
 
 
@@ -74,6 +85,9 @@ class FakeBackend:
     def __init__(self, count: int = 1):
         self.panes = [make_pane(i) for i in range(count)]
         self.resize_calls: list[tuple[str, int, int]] = []
+        # 0.11.0 底栏断言：记录每一次 send-keys 的 (pane_id, keys...)
+        self.sent_keys: list[tuple[str, tuple[str, ...]]] = []
+        self.sent_text: list[tuple[str, str]] = []
 
     def list_panes(self) -> list[PaneInfo]:
         return list(self.panes)
@@ -91,12 +105,12 @@ class FakeBackend:
     def resize_window(self, window_id: str, cols: int, rows: int) -> None:
         self.resize_calls.append((window_id, cols, rows))
 
-    # ---- 输入 / 生命周期（本套用例不关心，保持可调用） ----
+    # ---- 输入 / 生命周期（本套用例不关心注入内容，但底栏用例要看） ----
     def send_text(self, pane_id, text):
-        pass
+        self.sent_text.append((pane_id, text))
 
     def send_keys(self, pane_id, *keys):
-        pass
+        self.sent_keys.append((pane_id, tuple(keys)))
 
     def send_ctrl_a(self, pane_id):
         pass
@@ -141,6 +155,10 @@ def _displayed_panes(app) -> list[str]:
         for slot in range(app_mod.MAX_PANES)
         if app.query_one(f"#pane-{slot}", PaneWidget).display
     ]
+
+
+def _tree_lines(tree) -> list[str]:
+    return [str(line.path[-1].label.plain) for line in tree._tree_lines]
 
 
 def _mouse(cls, x: int, y: int, button: int = 1):
@@ -197,6 +215,63 @@ def test_compact_for_explicit_modes():
     assert compact_for(100, 30, True, "on") is True
     assert compact_for(46, 22, True, "off") is False
     assert compact_for(100, 30, False, "off") is False
+
+
+def test_resolve_keybar_mode_values():
+    """``MYRTUI_KEYBAR`` 只有 auto / off；非法值回落 auto。"""
+    assert resolve_keybar_mode(None) == "auto"
+    assert resolve_keybar_mode("auto") == "auto"
+    assert resolve_keybar_mode("OFF") == "off"
+    assert resolve_keybar_mode("  off  ") == "off"
+    for raw in ("", "on", "yes", "full"):
+        assert resolve_keybar_mode(raw) == "auto"
+
+
+def test_keybar_fit_keeps_priority_and_display_order():
+    """宽度够 → 全显示；每键 3+1 空隙，30 列丢方向键/DEL 的一部分。"""
+    pane_all = tuple(spec.id for spec in CONTEXTS["pane"])
+    assert fit_chip_ids(200) == pane_all
+    assert fit_chip_ids(35) == pane_all
+    assert fit_chip_ids(40) == pane_all
+
+    mid = fit_chip_ids(34)
+    assert mid == (
+        "esc", "enter", "shift_tab", "slash", "at", "up", "down", "newline"
+    )
+
+    narrow = fit_chip_ids(30)
+    assert "esc" in narrow
+    assert "up" not in narrow and "down" not in narrow
+    assert "newline" in narrow
+    assert "backspace" in narrow
+    # 仍按显示顺序（不是按 priority 排出来的顺序）
+    assert narrow == (
+        "esc", "enter", "shift_tab", "slash", "at", "newline", "backspace"
+    )
+
+    # 上下键成对：只放得下一只时两只都不出现
+    no_pair = fit_chip_ids(27)
+    assert "up" not in no_pair and "down" not in no_pair
+
+    assert fit_chip_ids(5) == ("esc",)
+    assert fit_chip_ids(0) == ()
+
+
+def test_keybar_context_sets_fit_independently():
+    """文件树 / Git 页只显示页面自己的键，不混入 AI coding 键。"""
+    tree = CONTEXTS["tree"]
+    assert fit_chip_ids(200, "tree") == tuple(spec.id for spec in tree)
+    assert fit_chip_ids(20, "tree") == tuple(spec.id for spec in tree)
+    tree_mid = fit_chip_ids(16, "tree")
+    assert tree_mid == ("page_esc", "page_up", "page_down", "page_enter")
+    tree_narrow = fit_chip_ids(12, "tree")
+    assert tree_narrow == ("page_esc", "page_enter", "menu")
+    assert "page_up" not in tree_narrow
+
+    git = CONTEXTS["git"]
+    assert fit_chip_ids(200, "git") == tuple(spec.id for spec in git)
+    assert fit_chip_ids(16, "git") == tuple(spec.id for spec in git)
+    assert fit_chip_ids(12, "git") == ("page_esc", "page_enter")
 
 
 # ---------- 2. App ----------
@@ -289,12 +364,13 @@ def test_compact_tab_switches_the_visible_pane(app_root):
             assert app.query_one("#pane-0", PaneWidget).display is False
             assert app._active_index == 2
 
-            # 新可见的槽位收到一次内容区尺寸（紧凑档无边框 → 46×21）
+            # 新可见的槽位收到一次内容区尺寸（紧凑档无边框 → 46×20：
+            # 顶栏 1 行 + 底栏 1 行）
             assert await _wait_until(
                 pilot, lambda: any(w == "$w2" for w, _c, _r in backend.resize_calls)
             ), backend.resize_calls
             sizes = [(c, r) for w, c, r in backend.resize_calls if w == "$w2"]
-            assert sizes == [(46, 21)], sizes
+            assert sizes == [(46, 20)], sizes
     asyncio.run(scenario())
 
 
@@ -397,11 +473,12 @@ def test_compact_sidebar_takes_the_whole_page(app_root):
                 pilot, lambda: sidebar.outer_size.width == 46
             ), sidebar.outer_size
             assert app.focused is not None and app.focused.id == "file-tree"
-            # 0.10.0 真机：两块各占整页——树 21 行才有空间弹右键菜单
+            # 0.10.0 真机：两块各占整页——树要足够高才弹得开右键菜单；
+            # 0.11.0 起顶栏 1 行、底栏 1 行 → 22 - 1 - 1 = 20
             assert app.query_one("#git-area").display is False
             tree = app.query_one("#file-tree")
             assert await _wait_until(
-                pilot, lambda: tree.outer_size.height == 21
+                pilot, lambda: tree.outer_size.height == 20
             ), tree.outer_size
 
             # Esc：回活动 pane，页面随之关闭
@@ -443,7 +520,7 @@ def test_compact_git_page_shows_only_history(app_root):
             git_area = app.query_one("#git-area")
             assert git_area.display is True
             assert await _wait_until(
-                pilot, lambda: git_area.outer_size.height == 21
+                pilot, lambda: git_area.outer_size.height == 20
             ), git_area.outer_size
             assert app.focused is not None and app.focused.id == "git-log"
 
@@ -472,7 +549,7 @@ def test_compact_drops_pane_border_and_restores_it(app_root):
         async with app.run_test(size=(46, 22)) as pilot:
             await pilot.pause(0.4)
             pane = app.query_one("#pane-0", PaneWidget)
-            assert (pane.outer_size.width, pane.outer_size.height) == (46, 21)
+            assert (pane.outer_size.width, pane.outer_size.height) == (46, 20)
             assert pane.content_size == pane.outer_size
 
             await pilot.resize_terminal(100, 30)
@@ -506,7 +583,446 @@ def test_compact_applies_after_modal_closes(app_root):
     asyncio.run(scenario())
 
 
-# ---------- 3. 回归确认（非紧凑尺寸 / 旧断言） ----------
+# ---------- 3. 窄屏底栏（0.11.0） ----------
+
+def test_keybar_visible_only_in_compact(app_root):
+    """桌面档隐藏；46×22 显示；退出紧凑又隐藏。"""
+    async def scenario():
+        app = _app(FakeBackend(1), app_root)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause(0.4)
+            bar = app.query_one("#keybar", KeyBar)
+            assert bar.display is False
+            assert app.query_one("#topbar").outer_size.height == 1
+            assert app.query_one("#btn-keybar", TopBarButton).display is False
+
+            await pilot.resize_terminal(46, 22)
+            assert await _wait_until(pilot, lambda: bar.display is True)
+            assert app.query_one("#key-chip-esc", KeyChip).display is True
+            assert app.query_one("#topbar").outer_size.height == 1
+            assert app.query_one("#btn-keybar", TopBarButton).display is True
+            assert app.query_one("#btn-keybar", TopBarButton).has_class("active")
+
+            await pilot.resize_terminal(100, 30)
+            assert await _wait_until(pilot, lambda: bar.display is False)
+    asyncio.run(scenario())
+
+
+def test_compact_bars_are_single_row(app_root):
+    """紧凑档顶栏 / 底栏 / 键都只有 1 行；文字直接在行内。"""
+    async def scenario():
+        app = _app(FakeBackend(1), app_root)
+        async with app.run_test(size=(46, 22)) as pilot:
+            await pilot.pause(0.4)
+            bar = app.query_one("#keybar", KeyBar)
+            assert app.query_one("#topbar").outer_size.height == 1
+            assert bar.outer_size.height == 1
+            assert app.query_one("#key-chip-esc", KeyChip).region.height == 1
+            assert app.query_one("#btn-help", TopBarButton).region.height == 1
+            assert app.query_one("#pane-0", PaneWidget).outer_size.height == 20
+    asyncio.run(scenario())
+
+
+def test_compact_bars_use_grey_keycaps(app_root):
+    """灰底 + 粗体；3 cell 键宽，文字在唯一一行里。"""
+    async def scenario():
+        app = _app(FakeBackend(1), app_root)
+        async with app.run_test(size=(46, 22)) as pilot:
+            await pilot.pause(0.4)
+            grey = Color.parse("#333333")
+            assert app.query_one("#topbar").styles.background == grey
+            assert app.query_one("#keybar", KeyBar).styles.background == grey
+
+            tab = app.query_one("#tab-0")
+            chip = app.query_one("#key-chip-esc", KeyChip)
+            button = app.query_one("#btn-help", TopBarButton)
+            assert button.styles.background == grey
+            assert chip.styles.background == grey
+            assert tab.styles.text_style.bold
+            assert chip.styles.text_style.bold
+            assert button.styles.text_style.bold
+
+            tab_lines = tab.render_lines(Region(0, 0, tab.size.width, tab.size.height))
+            assert tab_lines[0].text.strip() == "1"
+
+            chip_lines = chip.render_lines(
+                Region(0, 0, chip.outer_size.width, chip.outer_size.height)
+            )
+            assert chip_lines[0].text.strip() == "ESC"
+            assert chip.outer_size.width == 3
+    asyncio.run(scenario())
+
+
+def test_press_flashes_keycap_and_topbar_button(app_root):
+    """按下反馈：键帽/顶栏按钮闪 150ms accent，然后自动消失。"""
+    async def scenario():
+        app = _app(FakeBackend(1), app_root)
+        async with app.run_test(size=(46, 22)) as pilot:
+            await pilot.pause(0.4)
+            main = app.screen
+            chip = app.query_one("#key-chip-esc", KeyChip)
+            x, y = chip.region.x + 1, chip.region.y
+            main._forward_event(_mouse(MouseDown, x, y))
+            await pilot.pause(0.05)
+            assert chip.has_class("flash")
+            await pilot.pause(0.2)
+            assert not chip.has_class("flash")
+
+            button = app.query_one("#btn-keybar", TopBarButton)
+            x, y = button.region.x + 1, button.region.y
+            main._forward_event(_mouse(MouseDown, x, y))
+            await pilot.pause(0.05)
+            assert button.has_class("flash")
+            await pilot.pause(0.2)
+            assert not button.has_class("flash")
+    asyncio.run(scenario())
+
+
+def test_keybar_toggle_hides_and_restores_rows(app_root):
+    """顶栏 ``KEY``：隐藏底栏 → pane 多 1 行；再点恢复。"""
+    async def scenario():
+        app = _app(FakeBackend(1), app_root)
+        async with app.run_test(size=(46, 22)) as pilot:
+            await pilot.pause(0.4)
+            bar = app.query_one("#keybar", KeyBar)
+            pane = app.query_one("#pane-0", PaneWidget)
+            button = app.query_one("#btn-keybar", TopBarButton)
+            assert bar.display is True
+            assert pane.outer_size.height == 20
+            assert button.has_class("active")
+
+            await pilot.click("#btn-keybar")
+            assert await _wait_until(pilot, lambda: bar.display is False)
+            assert await _wait_until(
+                pilot, lambda: pane.outer_size.height == 21
+            ), pane.outer_size
+            assert not button.has_class("active")
+
+            await pilot.click("#btn-keybar")
+            assert await _wait_until(pilot, lambda: bar.display is True)
+            assert await _wait_until(
+                pilot, lambda: pane.outer_size.height == 20
+            ), pane.outer_size
+            assert button.has_class("active")
+    asyncio.run(scenario())
+
+
+def test_keybar_off_gives_the_row_back(app_root, monkeypatch):
+    """``MYRTUI_KEYBAR=off``：底栏不占行，pane 高度与 0.10.0 一致。"""
+    monkeypatch.setenv("MYRTUI_KEYBAR", "off")
+
+    async def scenario():
+        app = _app(FakeBackend(1), app_root)
+        async with app.run_test(size=(46, 22)) as pilot:
+            await pilot.pause(0.4)
+            assert app._compact is True
+            assert app.query_one("#keybar", KeyBar).display is False
+            assert app.query_one("#btn-keybar", TopBarButton).display is False
+            assert app.query_one("#topbar").outer_size.height == 1
+            pane = app.query_one("#pane-0", PaneWidget)
+            assert (pane.outer_size.width, pane.outer_size.height) == (46, 21)
+            assert pane.content_size == pane.outer_size
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("chip", "expected"),
+    [
+        ("esc", "Escape"),
+        ("enter", "Enter"),
+        ("shift_tab", "BTab"),
+        ("up", "Up"),
+        ("down", "Down"),
+        ("newline", "C-j"),
+        ("backspace", "BSpace"),
+    ],
+)
+def test_keybar_chip_injects_the_key(app_root, chip, expected):
+    """点击按钮 = 按同一个键：注入到活动 pane，且不经过前缀。"""
+    async def scenario():
+        backend = FakeBackend(1)
+        app = _app(backend, app_root)
+        async with app.run_test(size=(46, 22)) as pilot:
+            await pilot.pause(0.4)
+            before = len(backend.sent_keys)
+            await pilot.click(f"#key-chip-{chip}")
+            assert await _wait_until(
+                pilot, lambda: len(backend.sent_keys) > before
+            ), backend.sent_keys
+            assert backend.sent_keys[-1] == ("%0", (expected,))
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(("chip", "text"), [("slash", "/"), ("at", "@")])
+def test_keybar_chip_injects_printable_text(app_root, chip, text):
+    """``/``、``@`` 是文本前缀，走 send-text 而不是 send-keys。"""
+    async def scenario():
+        backend = FakeBackend(1)
+        app = _app(backend, app_root)
+        async with app.run_test(size=(46, 22)) as pilot:
+            await pilot.pause(0.4)
+            await pilot.click(f"#key-chip-{chip}")
+            assert await _wait_until(
+                pilot, lambda: backend.sent_text
+            ), backend.sent_text
+            assert backend.sent_text[-1] == ("%0", text)
+    asyncio.run(scenario())
+
+
+def test_keybar_esc_returns_from_sidebar_page_without_injecting(app_root):
+    """侧栏整页时点 Esc：回 pane、关页面，**不**把 Escape 发给 shell。"""
+    async def scenario():
+        backend = FakeBackend(1)
+        app = _app(backend, app_root)
+        async with app.run_test(size=(46, 22)) as pilot:
+            await pilot.pause(0.4)
+            await pilot.press("ctrl+a")
+            await pilot.press("b")
+            await pilot.pause(0.2)
+            assert app._compact_page == "tree"
+            assert app.focused is not None and app.focused.id == "file-tree"
+
+            before = len(backend.sent_keys)
+            await pilot.click("#key-chip-page_esc")
+            assert await _wait_until(pilot, lambda: app._compact_page is None)
+            assert app.focused is app.query_one("#pane-0", PaneWidget)
+            assert len(backend.sent_keys) == before
+    asyncio.run(scenario())
+
+
+def test_keybar_click_keeps_pane_focus_and_no_selection(app_root):
+    """chip 不可聚焦、不可选字：点击后焦点仍在 pane，主屏没有选区。"""
+    async def scenario():
+        app = _app(FakeBackend(1), app_root)
+        async with app.run_test(size=(46, 22)) as pilot:
+            await pilot.pause(0.4)
+            pane = app.query_one("#pane-0", PaneWidget)
+            main = app.screen
+            assert app.focused is pane
+
+            await pilot.click("#key-chip-esc")
+            await pilot.pause(0.2)
+            assert app.focused is pane
+            assert main._selecting is False
+            assert main.selections == {}
+    asyncio.run(scenario())
+
+
+def test_keybar_chip_closes_the_shortcut_help(app_root):
+    """浮层开着时点底栏 → 先收起浮层，再执行按键。"""
+    async def scenario():
+        backend = FakeBackend(1)
+        app = _app(backend, app_root)
+        async with app.run_test(size=(46, 22)) as pilot:
+            await pilot.pause(0.4)
+            await pilot.click("#btn-help")
+            panel = app.query_one("#shortcut-help")
+            assert panel.display is True
+            assert panel.region.y == 1, "紧凑档浮层应贴在 1 行顶栏下沿"
+            assert panel.region.bottom <= app.query_one("#keybar").region.y
+
+            before = len(backend.sent_keys)
+            await pilot.click("#key-chip-esc")
+            assert await _wait_until(pilot, lambda: panel.display is False)
+            assert await _wait_until(
+                pilot, lambda: len(backend.sent_keys) > before
+            ), backend.sent_keys
+            assert backend.sent_keys[-1] == ("%0", ("Escape",))
+    asyncio.run(scenario())
+
+
+def test_keybar_obeys_an_armed_ctrl_a_prefix(app_root):
+    """前缀已 arm 时点 Esc = ``Ctrl-a Esc``（第二个键），不是普通 Esc。"""
+    async def scenario():
+        backend = FakeBackend(1)
+        app = _app(backend, app_root)
+        async with app.run_test(size=(46, 22)) as pilot:
+            await pilot.pause(0.4)
+            await pilot.press("ctrl+a")
+            assert app._prefix_armed is True
+
+            before = len(backend.sent_keys)
+            await pilot.click("#key-chip-esc")
+            assert await _wait_until(
+                pilot, lambda: len(backend.sent_keys) > before
+            ), backend.sent_keys
+            assert app._prefix_armed is False
+            assert backend.sent_keys[-1] == ("%0", ("Escape",))
+    asyncio.run(scenario())
+
+
+def test_tree_page_bar_navigates_and_opens_menu(app_root):
+    """文件树整页：底栏切到 ESC / ↑ / ↓ / ENT / ≡，且真正能操作树。"""
+    async def scenario():
+        app = _app(FakeBackend(1), app_root)
+        async with app.run_test(size=(46, 22)) as pilot:
+            await pilot.pause(0.4)
+            await pilot.press("ctrl+a")
+            await pilot.press("b")
+            await pilot.pause(0.4)
+            assert app._compact_page == "tree"
+
+            visible = [chip.id for chip in app.query(KeyChip) if chip.display]
+            assert visible == [
+                "key-chip-page_esc",
+                "key-chip-page_up",
+                "key-chip-page_down",
+                "key-chip-page_enter",
+                "key-chip-menu",
+            ]
+
+            tree = app.query_one("#file-tree")
+            before = tree.cursor_line
+            await pilot.click("#key-chip-page_down")
+            await pilot.pause(0.2)
+            assert tree.cursor_line > before
+            await pilot.click("#key-chip-page_up")
+            await pilot.pause(0.2)
+            assert tree.cursor_line == before
+
+            tree.cursor_line = _tree_lines(tree).index("notes.txt")
+            await pilot.pause(0.1)
+            await pilot.click("#key-chip-page_enter")
+            assert await _wait_until(
+                pilot, lambda: isinstance(app.screen, ContextMenuScreen)
+            ), app.screen
+            await pilot.press("escape")
+            assert await _wait_until(
+                pilot, lambda: isinstance(app.screen, MainScreen)
+            )
+
+            app.query_one("#file-tree").focus()
+            tree.cursor_line = _tree_lines(tree).index("notes.txt")
+            await pilot.pause(0.1)
+            await pilot.click("#key-chip-menu")
+            assert await _wait_until(
+                pilot, lambda: isinstance(app.screen, ContextMenuScreen)
+            ), app.screen
+    asyncio.run(scenario())
+
+
+def test_git_page_details_button_shows_the_commit_card(app_root):
+    """Git 整页：Details 显示高亮提交的完整内容，再点收起。"""
+    async def scenario():
+        app = _app(FakeBackend(1), app_root)
+        async with app.run_test(size=(46, 22)) as pilot:
+            await pilot.pause(0.4)
+            await pilot.press("ctrl+a")
+            await pilot.press("g")
+            await pilot.pause(0.4)
+            assert app._compact_page == "git"
+
+            panel = app.query_one("#git-log", GitLogPanel)
+            panel.show_commits(
+                [
+                    Commit(
+                        sha="abc1234",
+                        author="alice",
+                        date="2026-11-05 10:00",
+                        subject="fix: 测试提交",
+                        body="正文第一行\n正文第二行",
+                    ),
+                    Commit(
+                        sha="def5678",
+                        author="bob",
+                        date="2026-11-04 09:00",
+                        subject="feat: 第二条",
+                        body="第二条正文",
+                    ),
+                ],
+                width=40,
+            )
+            await pilot.pause(0.2)
+            panel.highlighted = 0
+            visible = [chip.id for chip in app.query(KeyChip) if chip.display]
+            assert visible == [
+                "key-chip-page_esc",
+                "key-chip-page_up",
+                "key-chip-page_down",
+                "key-chip-page_enter",
+            ]
+
+            await pilot.click("#key-chip-page_down")
+            await pilot.pause(0.2)
+            assert panel.highlighted == 1
+
+            await pilot.click("#key-chip-page_enter")
+            card = app.query_one("#commit-card", CommitCard)
+            assert card.display is True
+            body = card.query_one("#commit-card-body").render().plain
+            assert "def5678" in body
+            assert "第二条正文" in body
+            assert card.region.right <= app.size.width
+            assert card.region.bottom <= app.query_one("#keybar").region.y
+
+            await pilot.click("#key-chip-page_enter")
+            assert card.display is False
+    asyncio.run(scenario())
+
+
+def test_topbar_toggle_in_page_keeps_tree_focus(app_root):
+    """整页打开时点顶栏 KEY：只改底栏显隐，不把焦点抢回 pane。"""
+    async def scenario():
+        app = _app(FakeBackend(1), app_root)
+        async with app.run_test(size=(46, 22)) as pilot:
+            await pilot.pause(0.4)
+            await pilot.press("ctrl+a")
+            await pilot.press("b")
+            await pilot.pause(0.4)
+            tree = app.query_one("#file-tree")
+            bar = app.query_one("#keybar", KeyBar)
+            assert app.focused is tree
+            assert bar.display is True
+
+            await pilot.click("#btn-keybar")
+            assert await _wait_until(pilot, lambda: bar.display is False)
+            assert app._compact_page == "tree"
+            assert app.focused is tree
+            assert await _wait_until(
+                pilot, lambda: tree.outer_size.height == 21
+            ), tree.outer_size
+
+            await pilot.click("#btn-keybar")
+            assert await _wait_until(pilot, lambda: bar.display is True)
+            assert app._compact_page == "tree"
+            assert app.focused is tree
+    asyncio.run(scenario())
+
+
+def test_keybar_drops_low_priority_chips_at_30_cols(app_root):
+    """30 列：方向键先被丢，Esc / ENT / C-J / DEL 仍在。"""
+    async def scenario():
+        app = _app(FakeBackend(4), app_root)
+        async with app.run_test(size=(30, 22)) as pilot:
+            await pilot.pause(0.4)
+            assert app._compact is True
+            assert app.query_one("#key-chip-esc", KeyChip).display is True
+            assert app.query_one("#key-chip-enter", KeyChip).display is True
+            assert app.query_one("#key-chip-newline", KeyChip).display is True
+            assert app.query_one("#key-chip-backspace", KeyChip).display is True
+            assert app.query_one("#key-chip-up", KeyChip).display is False
+            assert app.query_one("#key-chip-down", KeyChip).display is False
+            # 4 tab + 6 个 3-cell 按钮 = 30 cell，30 列刚好全在屏内
+            for btn_id in ("#btn-keybar", "#btn-help"):
+                btn = app.query_one(btn_id, TopBarButton)
+                assert btn.region.right <= 30, (btn_id, btn.region)
+    asyncio.run(scenario())
+
+
+def test_compact_topbar_fits_40_cols(app_root):
+    """顶栏 30 cell；40 列留出状态位，全部按钮在屏内。"""
+    async def scenario():
+        app = _app(FakeBackend(1), app_root)
+        async with app.run_test(size=(40, 22)) as pilot:
+            await pilot.pause(0.4)
+            assert app._compact is True
+            for btn_id in ("#btn-keybar", "#btn-help"):
+                btn = app.query_one(btn_id, TopBarButton)
+                assert btn.region.right <= 40, (btn_id, btn.region)
+    asyncio.run(scenario())
+
+
+# ---------- 4. 回归确认（非紧凑尺寸 / 旧断言） ----------
 
 def test_regression_context_menu_clamped_in_compact_size(app_root):
     """test_v20 的同款断言，在 40×12（会进紧凑档）下仍成立。"""

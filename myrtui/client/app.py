@@ -32,6 +32,12 @@ from myrtui.client import graphics as graphics_mod
 from myrtui.client.context_menu import ContextMenuScreen
 from myrtui.client.file_tree import FileTree
 from myrtui.client.git_panel import CommitCard, GitLogPanel
+from myrtui.client.keybar import (
+    KEYBAR_ENV,
+    KeyBar,
+    KeyChip,
+    resolve_keybar_mode,
+)
 from myrtui.client.overlay import QuietWhenCovered
 from myrtui.client.pane_widget import PaneWidget, parse_sgr_line
 from myrtui.client.separators import DRAG_BUTTONS, Separator
@@ -538,16 +544,32 @@ class TerminalApp(App, inherit_bindings=False):
        shortcut-help（v0.22）：顶栏 `?` 的快捷键浮层，层序在 commit-card 之上
        （两者同时出现的概率极低，但浮层必须压住悬停卡）。 */
     Screen { layout: vertical; layers: default commit-card shortcut-help; }
-    #topbar { height: 1; layout: horizontal; background: $surface; }
-    #topbar TopBarButton { width: auto; background: $surface; color: $text; }
-    #topbar TopBarButton:hover { background: $accent; color: $text; }
-    #topbar TopBarButton.disabled { color: $text-disabled; }
-    #topbar PaneTab { width: auto; background: $surface; color: $text; }
-    #topbar PaneTab.active { background: $accent; color: $text; }
-    #topbar PaneTab.dead { color: $text-disabled; }
+    #topbar { height: 1; layout: horizontal; background: #333333; }
+    #topbar TopBarButton {
+        width: auto;
+        background: #333333;
+        color: #f0f0f0;
+        text-style: bold;
+    }
+    #topbar TopBarButton:hover { background: $accent; color: #111111; }
+    #topbar TopBarButton.disabled { color: #888888; }
+    /* 0.11.0：底栏开关只在紧凑档出现；初始隐藏，App 用内联 display 打开。 */
+    #topbar #btn-keybar { display: none; }
+    #topbar TopBarButton.active { background: $accent; color: #111111; }
+    #topbar PaneTab {
+        width: auto;
+        background: #333333;
+        color: #f0f0f0;
+        text-style: bold;
+    }
+    #topbar PaneTab.active { background: $accent; color: #111111; }
+    #topbar PaneTab.dead { color: #888888; }
     /* 状态提示吃满中间空白，把品牌标签顶到最右侧 */
-    #topbar-status { width: 1fr; color: $error; }
-    #topbar-brand { width: auto; padding: 0 1; color: $text-muted; }
+    #topbar-status { width: 1fr; min-width: 0; color: $error; }
+    #topbar-brand { width: auto; padding: 0 1; color: #b8b8b8; }
+    /* 按下反馈：和 active pane 号同色，150ms 后由 flash.py 移除。 */
+    #topbar TopBarButton.flash,
+    #keybar KeyChip.flash { background: $accent; color: #111111; }
     /* 快捷键浮层：非模态、不参与布局；位置由 App 在显示时按 `?` 左缘计算
        （紧贴顶栏下沿 y=1），高度超屏时在浮层内滚轮阅读。 */
     #shortcut-help {
@@ -566,6 +588,24 @@ class TerminalApp(App, inherit_bindings=False):
     }
     #shortcut-help-body { width: 1fr; height: auto; }
     #main { layout: horizontal; height: 1fr; }
+    /* 0.11.0 窄屏底栏：1 行、每个键 3 cell + 1 cell 空隙，整行居中。
+       深灰底与终端黑背景区分；显示由 set_visible 控制。 */
+    #keybar {
+        height: 1;
+        layout: horizontal;
+        align: center middle;
+        background: #333333;
+    }
+    #keybar KeyChip {
+        width: 3;
+        height: 1;
+        padding: 0;
+        content-align: center middle;
+        background: #333333;
+        color: #f0f0f0;
+        text-style: bold;
+    }
+    #keybar KeyChip:hover { background: $accent; color: #111111; }
     /* v0.11.3：聚焦底色**按半区染色**——焦点在文件树 → 只染上半区；焦点在
        Git 面板 → 只染下半区（#git-area = 标题行 + 历史面板的容器，CSS 无法
        跨兄弟节点染色，故包一层容器做 focus-within 锚点）。整侧栏染色的旧
@@ -758,6 +798,12 @@ class TerminalApp(App, inherit_bindings=False):
         self._compact_page: str | None = None
         self._sidebar_want = True
         self._compact_dirty = False
+        # 0.11.0 窄屏底栏：auto = 紧凑档显示；off = 永久关闭（连顶栏开关
+        # 一起隐藏）。_keybar_on 是本次运行的开关状态，不落盘。
+        self._keybar_mode: str = resolve_keybar_mode(
+            _os.environ.get(KEYBAR_ENV)
+        )
+        self._keybar_on = self._keybar_mode != "off"
         self._shell_names = set(SHELL_COMMANDS)
         env_shell = _os.environ.get("SHELL")
         if env_shell:
@@ -807,6 +853,9 @@ class TerminalApp(App, inherit_bindings=False):
                     # 列内上下分隔线（可拖，pane-2 ↔ pane-3；与 sep-rows-a 共用比例）
                     yield Separator("horizontal", id="sep-rows-b")
                     yield PaneWidget("", id="pane-3")
+        # 0.11.0：窄屏底栏。放在 #main 之后、overlay 之前；显示/上下文
+        # 由 _apply_keybar_visibility 统一控制，隐藏时 display:none 不占行。
+        yield KeyBar(id="keybar")
         # 悬停提交详情：屏幕级 overlay 最后挂载，保证盖在 pane 之上。
         yield CommitCard(id="commit-card")
         # v0.22：顶栏 `?` 的快捷键浮层（层序在 commit-card 之上）
@@ -1156,6 +1205,7 @@ class TerminalApp(App, inherit_bindings=False):
         self._apply_sidebar_visibility()
         self._apply_pane_visibility()
         self.query_one(TopBar).set_compact(compact)
+        self._apply_keybar_visibility()
         # 焦点不能悬在一个刚被隐藏的侧栏上（进入紧凑 / 退出时侧栏偏好为
         # 折叠都会走到这里）；整页打开时侧栏仍可见，不动焦点。
         try:
@@ -1163,6 +1213,21 @@ class TerminalApp(App, inherit_bindings=False):
                 self._focus_active_pane()
         except NoMatches:
             return  # teardown 竞态（v0.16 口径）
+
+    def _apply_keybar_visibility(self) -> None:
+        """按紧凑档 / 开关状态 / 当前页面同步底栏与顶栏 ``KEY`` 开关。"""
+        try:
+            bar = self.query_one("#keybar", KeyBar)
+            topbar = self.query_one(TopBar)
+        except NoMatches:
+            return  # teardown 竞态（v0.16 口径）
+        context = self._compact_page or "pane"
+        bar.set_context(context)
+        bar.set_visible(self._compact and self._keybar_on)
+        topbar.set_keybar_control(
+            self._compact and self._keybar_mode != "off",
+            self._keybar_on,
+        )
 
     def _apply_sidebar_visibility(self) -> None:
         """按紧凑档 / 整页 / 桌面偏好设侧栏与 pane 区的 display。
@@ -1223,6 +1288,7 @@ class TerminalApp(App, inherit_bindings=False):
         self._compact_page = page
         self._apply_sidebar_visibility()
         self._apply_pane_visibility()
+        self._apply_keybar_visibility()
         if page == "tree":
             self.query_one("#file-tree", FileTree).focus()
         elif page == "git":
@@ -1289,6 +1355,13 @@ class TerminalApp(App, inherit_bindings=False):
         if not self._focus_git_log():
             return  # teardown 竞态（同 _focus_active_pane 的兜底口径）
         self._refresh_status()
+
+    def action_toggle_keybar(self) -> None:
+        """顶栏 ``KEY``：本次运行内显示 / 隐藏窄屏底栏。"""
+        if not self._compact or self._keybar_mode == "off":
+            return
+        self._keybar_on = not self._keybar_on
+        self._apply_keybar_visibility()
 
     # ---------- 分隔线与布局比例（v0.11） ----------
 
@@ -3165,9 +3238,17 @@ class TerminalApp(App, inherit_bindings=False):
                 self._burst()
 
     def on_key(self, event: Key) -> None:
+        self._dispatch_key(event.key, event.character)
+
+    def _dispatch_key(self, key: str, character: str | None = None) -> None:
+        """键路由的**唯一出口**：真实键盘与窄屏底栏共用（0.11.0）。
+
+        底栏按钮只是把同一个 Textual 键名送进来，不另写一套语义——
+        侧栏聚焦时 ``Esc`` 回终端、``Ctrl-a`` 前缀状态、dead pane 拦截、
+        手势取消全部与物理按键一致。
+        """
         if not isinstance(self.screen, MainScreen):
             return
-        key = event.key
         # v0.35：高亮 / hold / 手势期间按键 → 先取消并解冻，然后正常处理。
         # 例外：Ctrl-a 前缀本身（等第二个键分流）与「前缀 + c」（action_copy
         # 会复制并立刻解冻）；手势中按任意键都直接收摊（画面不能与输入脱节）。
@@ -3184,7 +3265,7 @@ class TerminalApp(App, inherit_bindings=False):
             # v0.22：前缀键是一次显式导航/动作 → 收起悬停浮层，别挡住目标区域
             # v0.29：`?` 是开关，必须在「前缀动作先收起」之前分流——否则
             # 这里先隐藏、toggle 再看到隐藏状态又打开，按第二次关不掉。
-            if key in ("question_mark", "?") or event.character == "?":
+            if key in ("question_mark", "?") or character == "?":
                 self._toggle_shortcut_help()
                 return
             self._hide_shortcut_help()
@@ -3216,7 +3297,7 @@ class TerminalApp(App, inherit_bindings=False):
             elif not self._sidebar_focused():
                 # Ctrl-a [其他] → 透传给内层 shell（§10.1）
                 # 侧栏聚焦时不透传（D8：焦点在侧栏 → 键归侧栏）
-                self._forward_key(key, event.character)
+                self._forward_key(key, character)
             return
         if key == "ctrl+a":
             self._prefix_armed = True
@@ -3229,7 +3310,7 @@ class TerminalApp(App, inherit_bindings=False):
             if key == "escape":
                 self._focus_active_pane()  # Esc 回终端
             return
-        self._forward_key(key, event.character)
+        self._forward_key(key, character)
 
     def on_paste(self, event: Paste) -> None:
         if not event.text:
@@ -3265,6 +3346,11 @@ class TerminalApp(App, inherit_bindings=False):
             self.action_detach()
         elif event.button_id == "btn-kill":
             self.action_kill()
+        elif event.button_id == "btn-keybar":
+            # 紧凑档整页打开时焦点在树上：这里不能被末尾的「聚焦 pane」
+            # 抢走，否则树页还在、键盘却回到了隐藏的 pane。
+            self.action_toggle_keybar()
+            return
         elif event.button_id == "btn-help":
             # 悬停是桌面入口；点击在两种设备上都应是**开关**（0.10.0 真机：
             # 手机上浮层占大半屏，点 `?` 关不掉就只能点边缘）。
@@ -3278,6 +3364,64 @@ class TerminalApp(App, inherit_bindings=False):
     def on_pane_tab_pressed(self, event: PaneTab.Pressed) -> None:
         """点击顶栏 tab = Ctrl-a N（§12：顶栏标签可点击）。"""
         self._set_active(event.index)
+
+    def on_key_chip_pressed(self, event: KeyChip.Pressed) -> None:
+        """窄屏底栏按钮（0.11.0）：把键名交给与物理键盘同一个路由。
+
+        芯片的 MouseDown 已被 ``KeyChip`` stop 掉，App 的「点浮层外收起」
+        收不到——这里显式收起快捷键浮层，免得按键后浮层还盖在半屏。
+        不抢焦点：``KeyChip`` 不可聚焦，点击后焦点仍在原处（pane 或侧栏），
+        由 ``_dispatch_key`` 自己决定要不要移动。
+        """
+        self._hide_shortcut_help()
+        if event.page_action is not None:
+            self._dispatch_page_action(event.page_action)
+        elif event.key is not None:
+            self._dispatch_key(event.key, event.character)
+
+    def _dispatch_page_action(self, action: str) -> None:
+        """底栏在紧凑侧栏整页里的动作（树 / Git 面板）。
+
+        目标按 ``_compact_page`` 取，不依赖 ``self.focused``：点过顶栏后焦点
+        可能被挪走，但页面里的底栏仍应能操作页面对应的控件。
+        """
+        if action in ("cursor_up", "cursor_down"):
+            try:
+                target = (
+                    self.query_one("#file-tree", FileTree)
+                    if self._compact_page == "tree"
+                    else self.query_one("#git-log", GitLogPanel)
+                )
+            except NoMatches:
+                return
+            if action == "cursor_up":
+                target.action_cursor_up()
+            else:
+                target.action_cursor_down()
+            return
+        if action == "activate":
+            if self._compact_page == "git":
+                try:
+                    self.query_one("#git-log", GitLogPanel).toggle_details()
+                except NoMatches:
+                    return
+                return
+            try:
+                tree = self.query_one("#file-tree", FileTree)
+            except NoMatches:
+                return
+            tree.activate_cursor()
+            return
+        if action == "menu":
+            try:
+                tree = self.query_one("#file-tree", FileTree)
+            except NoMatches:
+                return
+            tree.open_menu()
+            return
+        if action == "back":
+            self._set_compact_page(None)
+            self._focus_active_pane()
 
     # ---------- 快捷键帮助浮层（v0.22） ----------
 
@@ -3323,7 +3467,17 @@ class TerminalApp(App, inherit_bindings=False):
         except NoMatches:
             x = 0
         x = max(0, min(x, self.screen.size.width - width))
-        panel.absolute_offset = Offset(x, 1)  # 紧贴顶栏下沿，指针可直接下移进来
+        # 0.11.0：紧凑档顶栏 2 行、底栏 2 行——浮层从顶栏下沿开始，
+        # 并把高度扣到底栏之上，避免盖住触摸按钮。
+        try:
+            top = max(1, self.query_one(TopBar).region.bottom)
+            keybar = self.query_one("#keybar", KeyBar)
+            reserved = keybar.outer_size.height if keybar.display else 0
+        except NoMatches:
+            top = 1
+            reserved = 0
+        panel.styles.max_height = max(3, self.screen.size.height - top - reserved - 1)
+        panel.absolute_offset = Offset(x, top)  # 紧贴顶栏下沿，指针可直接下移进来
         panel.scroll_home(animate=False)
         panel.display = True
 

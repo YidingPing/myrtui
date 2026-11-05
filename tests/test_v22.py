@@ -132,7 +132,9 @@ def test_help_button_sits_right_of_kill():
             await pilot.pause(0.3)
             ids = [child.id for child in app.query_one(TopBar).children]
             assert "btn-help" in ids
-            assert ids.index("btn-help") == ids.index("btn-kill") + 1
+            # 0.11.0：KEY 开关插在 Kill 与 ? 之间。
+            assert ids.index("btn-keybar") == ids.index("btn-kill") + 1
+            assert ids.index("btn-help") == ids.index("btn-keybar") + 1
 
     asyncio.run(scenario())
 
@@ -430,13 +432,14 @@ def test_git_log_focus_blocks_keys_from_shell():
 # ---------- 数据表防漂移 ----------
 
 def test_shortcut_table_covers_every_prefix_branch():
-    """``on_key`` 的每个前缀分支都必须出现在浮层里（防新增键位忘补表）。"""
+    """``_dispatch_key`` 的每个前缀分支都必须出现在浮层里（防新增键位忘补表）。"""
     import inspect
     import re
 
     from myrtui.client.app import TerminalApp
 
-    source = inspect.getsource(TerminalApp.on_key)
+    # 0.11.0：键路由从 on_key 抽到 _dispatch_key（底栏与键盘共用同一出口）。
+    source = inspect.getsource(TerminalApp._dispatch_key)
     branch_letters = set(re.findall(r'key == "([a-z])"', source))
     prefix_rows = next(section for section in SECTIONS if section.id == "prefix").rows
     table = {row.keys for row in prefix_rows}

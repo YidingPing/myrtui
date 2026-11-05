@@ -635,6 +635,46 @@ class FileTree(DirectoryTree):
 
     # ---------- 键盘打开菜单（v0.28.1） ----------
 
+    def _menu_relative(self, node) -> str:
+        """节点 → 菜单路径（根节点归一为空串，与右键同口径）。"""
+        relative = self._relative(node.data.path)
+        return "" if relative == "." else relative
+
+    def _post_context_menu(self, node) -> None:
+        """按光标行弹出上下文菜单（Enter / Space / 底栏 Menu 共用）。"""
+        screen_x, screen_y = self._menu_anchor()
+        self.post_message(
+            self.PathContextRequested(
+                self._menu_relative(node),
+                self._absolute(node.data.path),
+                is_dir=node.allow_expand,
+                screen_x=screen_x,
+                screen_y=screen_y,
+            )
+        )
+
+    def activate_cursor(self) -> None:
+        """执行光标行：文件 = 选中 + 弹菜单；目录 = 展开 / 收起。
+
+        底栏 ``ENT`` 与键盘 Enter 共用这个入口（``on_key`` 里目录仍交回
+        Tree 的绑定，避免 select_cursor 跑两遍）。
+        """
+        node = self.cursor_node
+        if node is None or node.data is None:
+            return
+        if node.allow_expand:
+            self.action_select_cursor()  # NodeSelected → toggle + PathSelected
+            return
+        self.post_message(self.PathSelected(self._menu_relative(node), False))
+        self._post_context_menu(node)
+
+    def open_menu(self) -> None:
+        """打开当前光标行的上下文菜单（底栏 ``Menu`` 与键盘 Space 共用）。"""
+        node = self.cursor_node
+        if node is None or node.data is None:
+            return
+        self._post_context_menu(node)
+
     def on_key(self, event: events.Key) -> None:
         """``Enter`` / ``Space`` 打开上下文菜单，让全键盘操作也能用菜单。
 
@@ -656,22 +696,10 @@ class FileTree(DirectoryTree):
             return  # 目录：Enter 仍是展开 / 收起
         event.prevent_default()
         event.stop()
-        relative = self._relative(node.data.path)
-        if relative == ".":
-            relative = ""  # 根节点（与 _node_relative 同口径）
         if event.key == "enter":
-            # Enter 保持「选中」语义（Space 是纯菜单入口，不改历史）
-            self.post_message(self.PathSelected(relative, False))
-        screen_x, screen_y = self._menu_anchor()
-        self.post_message(
-            self.PathContextRequested(
-                relative,
-                self._absolute(node.data.path),
-                is_dir=node.allow_expand,
-                screen_x=screen_x,
-                screen_y=screen_y,
-            )
-        )
+            self.activate_cursor()
+        else:
+            self.open_menu()
 
     def _menu_anchor(self) -> tuple[int, int]:
         """键盘菜单锚点：与光标行同高、侧栏右缘（不遮住目标行）。

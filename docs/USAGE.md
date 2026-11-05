@@ -111,6 +111,11 @@ myrtui stop [target]   # ask the front end to leave, then kill the session
 | `Ctrl-a` then 1 s timeout | send a literal `Ctrl-a` to the inner shell |
 | anything else | passed straight to the inner shell |
 
+In the compact layout the single-row bottom bar sends `ESC`, `ENT`, `⇧ ⇥`,
+`/`, `@`, `↑`, `↓`, `C-J` and `DEL` with one tap; the
+file-tree and Git pages switch it to their own buttons. `KEY` toggles it for the
+current run; `MYRTUI_KEYBAR=off` disables it permanently.
+
 `Ctrl-a c` / `v` / `g` take three letters away from the shell; `Ctrl-a o` is
 free and passes `o` through like any undefined prefix key.
 
@@ -148,11 +153,46 @@ injected with the encoding the program asked for (SGR 1006, otherwise the legacy
 Below 60 columns (or 16 rows) myrtui switches to a **compact layout**: the
 sidebar is hidden, only the focused pane is shown (without the 1-cell border),
 the tab strip is just `1 2 3 4`, and the top bar buttons shrink to
-`+ × d k ?` (`×` closes the focused pane). That keeps a 46×22 phone screen at
-one 46×21 pane instead of four 10-column ones. Moving back to a wider window
-restores the layout; the thresholds have hysteresis (enter below 60, leave at
-64×18), so a soft keyboard appearing and disappearing does not flip the layout
-back and forth.
+`+ X D K KEY ?` (`X` closes the focused pane, `KEY` toggles the key bar). Both
+bars are **one row tall**; the key bar is a centered strip of 3-cell keys with
+1-cell gaps, so a 46×22 phone screen is one 46×20 pane instead of four
+10-column ones (46×21 with the key bar hidden). Moving back to a wider
+window restores the layout; the thresholds have hysteresis (enter below 60,
+leave at 64×18), so a soft keyboard appearing and disappearing does not flip the
+layout back and forth.
+
+The key bar is tuned for AI coding TUIs:
+
+| Button | Sends | Why |
+|---|---|---|
+| `ESC` | Esc | interrupt / close a dialog |
+| `ENT` | Enter | submit |
+| `⇧ ⇥` | Shift+Tab | cycle agent / permission mode |
+| `/` | `/` | slash commands |
+| `@` | `@` | file mention |
+| `↑` `↓` | arrows | prompt history / list navigation |
+| `C-J` | Ctrl-J | newline without submitting (works in every terminal) |
+| `DEL` | Backspace | fix a mistyped prefix |
+
+Each key is 3 cells wide and flashes accent for 150 ms when tapped. Buttons are
+dropped from the tail by priority on very narrow screens (the full pane row is
+35 cells including gaps; 40/49 columns show all 9). `Tab`, `Ctrl-C` and the
+left/right arrows are intentionally absent: they either need typing anyway or
+overlap with `ESC`.
+
+In a compact **file-tree page** the bar switches to `ESC` / `↑` / `↓` / `ENT` /
+`≡` (Space, opens the context menu). `ENT` keeps the keyboard semantics: a file
+row selects + opens the menu, a directory row expands / collapses; `≡` opens
+the menu on any row (this is the only touch path to directory actions such as
+"refresh this directory"). In the **Git history page** it becomes
+`ESC` / `↑` / `↓` / `ENT`: `ENT` shows the full commit card for the highlighted
+commit (subject, body, sha, author, date), replacing the desktop hover card that
+has no room on a full-width phone page. Tap `ENT` again or tap outside the card
+to close it.
+
+If your phone terminal already has a complete extra-keys row, `MYRTUI_KEYBAR=off`
+disables the bar permanently (the `KEY` button is hidden too). With `auto` (the
+default), `KEY` only changes the current run.
 
 - `Ctrl-a b` opens the **file tree** as a full page (the pane area is hidden);
   press it again, press `Esc`, or click a tab to return.
@@ -210,7 +250,10 @@ parent is refreshed instead; if the project root is gone, the whole tree reloads
 default. The date grows from `MM-DD` to `YYYY-MM-DD` to `YYYY-MM-DD HH:MM` as the
 sidebar widens. Hovering a commit for 1 s opens a details card (subject, body,
 short sha, author, date; scroll inside the card when the body is long; the card's
-text can be dragged and copied with `Ctrl-a c`). Selecting a file switches to
+text can be dragged and copied with `Ctrl-a c`). In the compact **Git page**,
+where there is no room for a side card and no hover, the bottom-bar `ENT`
+key opens the same card over the list; tap it again or tap outside to close.
+Selecting a file switches to
 that file's history (`git log --follow`), and the header reads
 `GIT <branch> · <relative path>`; selecting a directory returns to repo-level.
 Non-git directories show "not a git repository", missing git shows
@@ -421,6 +464,7 @@ the outer tmux's own drag-to-copy is gone.
 |---|---|---|
 | `MYRTUI_LANG` | `en` | UI language: `en` / `zh_CN`. Also read from `config.json`'s `lang` and from a `zh*` locale; `--lang` wins for one run |
 | `MYRTUI_COMPACT` | `auto` | narrow-screen layout: `auto` enters the compact layout below 60 columns / 16 rows and leaves at 64×18 (hysteresis); `on` forces it, `off` keeps the old layout |
+| `MYRTUI_KEYBAR` | `auto` | compact-layout touch bar (one row, 3-cell keys with 1-cell gaps): AI-coding keys in a pane, navigation / `≡` / `ENT` in the tree and Git pages; keys flash for 150 ms; `KEY` toggles it for the current run; `off` disables it permanently (and hides `KEY`) |
 | `MYRTUI_EDITOR` | — | editor for "Open" (see resolution order above) |
 | `MYRTUI_IDLE_INTERVAL` | `0.15` | idle capture interval in seconds (clamped to `0.05–5.0`); while content keeps changing the loop speeds up to ~17 Hz by itself; raise it for secondary instances (`MYRTUI_IDLE_INTERVAL=0.5 myrtui`) |
 | `MYRTUI_TRANSPORT` | `auto` | tmux transport: `auto` = a resident `tmux -C` client, falling back to one process per call when attach fails; `exec` = one process per call (old path); `control` = require the resident client (errors out if it cannot start) |

@@ -240,6 +240,19 @@ MESSAGES: dict[str, str] = {
     "app.close_confirm_no": "取消",
     "topbar.detach": "分离",
     "topbar.kill": "结束",
+    # ---- 窄屏底栏 -----------------------------------------------------------
+    "keybar.esc": "ESC",
+    "keybar.enter": "ENT",
+    "keybar.shift_tab": "⇧ ⇥",
+    "keybar.slash": "/",
+    "keybar.at": "@",
+    "keybar.up": "↑",
+    "keybar.down": "↓",
+    "keybar.newline": "C-J",
+    "keybar.backspace": "DEL",
+    "keybar.menu": "≡",
+    "keybar.toggle": "KEY",
+    "keybar.toggle_tip": "显示 / 隐藏底栏",
 
 }
 

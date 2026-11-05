@@ -98,6 +98,9 @@ class GitLogPanel(OptionList):
         self._hover_y = 0
         self._hover_timer = None
         self._hide_timer = None
+        # 紧凑档 Git 整页的「Details」按钮把卡片钉住；悬停卡片的离开/宽限
+        # 逻辑不能把它误关（手机上根本没有指针悬停）。
+        self._details_index: int | None = None
 
     def show_commits(self, commits: list[Commit], width: int | None = None) -> None:
         """整表替换；逐行渲染 Text，标题按宽度截断加 ``…``（N9 口径）。
@@ -154,6 +157,8 @@ class GitLogPanel(OptionList):
 
     def _hover_row(self, index: int | None, y: int) -> None:
         """悬停意图入口（与鼠标事件解耦，便于单测计时语义）。"""
+        if self._details_index is not None:
+            return  # 详情卡片已由 Details 按钮钉住，不参与悬停
         if index is None or not (0 <= index < len(self._commits)):
             self._cancel_hover()
             return
@@ -170,6 +175,8 @@ class GitLogPanel(OptionList):
 
     def _on_leave(self, event: events.Leave) -> None:
         super()._on_leave(event)
+        if self._details_index is not None:
+            return  # Details 钉住的卡片不跟指针走
         card = self._card()
         if card is not None and card.display:
             # 卡片已显示：不要立刻隐藏——指针可能正要移进右侧卡片（中间
@@ -196,6 +203,8 @@ class GitLogPanel(OptionList):
     def _show_hover_card(self) -> None:
         """1s 计时到点：确认仍悬停在同一行后再显示。"""
         self._hover_timer = None
+        if self._details_index is not None:
+            return
         index = self._hover_index
         if index is None or not (0 <= index < len(self._commits)):
             return
@@ -221,8 +230,51 @@ class GitLogPanel(OptionList):
         card.absolute_offset = Offset(x, self._hover_y)
         return True
 
+    def toggle_details(self) -> None:
+        """紧凑档 Git 整页：显示 / 收起当前高亮提交的完整内容。
+
+        手机没有悬停，而且整页宽度下侧边的悬停卡片没有落脚处（
+        ``_position_card`` 的 x 已越过屏宽）。这里把同一张 ``CommitCard``
+        直接盖在历史列表上，读法保持一致：正文可滚轮、可拖选复制。
+        """
+        if self._details_index is not None:
+            self._hide_card()
+            return
+        card = self._card()
+        if card is None:
+            return
+        index = self.highlighted
+        if index is None:
+            index = 0
+        if not (0 <= index < len(self._commits)):
+            return
+        self._cancel_hover_timer()
+        self._cancel_hide_timer()
+        card.set_content(commit_card_text(self._commits[index]))
+        if not self._position_details_card(card):
+            return
+        self._details_index = index
+        card.display = True
+
+    def _position_details_card(self, card: CommitCard) -> bool:
+        """整页模式：卡片贴住历史列表左上角，不盖住底栏。"""
+        if self.region.width < CARD_MIN_WIDTH or self.region.height <= 0:
+            return False
+        width = min(
+            CARD_MAX_WIDTH,
+            self.region.width,
+            self.screen.size.width - self.region.x - 1,
+        )
+        if width < CARD_MIN_WIDTH:
+            return False
+        card.styles.max_width = width
+        card.styles.max_height = max(4, self.region.height)
+        card.absolute_offset = Offset(self.region.x, self.region.y)
+        return True
+
     def _hide_card(self) -> None:
         self._cancel_hide_timer()
+        self._details_index = None
         card = self._card()
         if card is not None:
             # 卡片的正文 Static 是复用的：不清理旧选区的话，下一条提交的
@@ -259,6 +311,8 @@ class GitLogPanel(OptionList):
 
     def _hide_card_if_unhovered(self) -> None:
         self._hide_timer = None
+        if self._details_index is not None:
+            return  # Details 钉住
         card = self._card()
         if card is None:
             return
@@ -274,6 +328,8 @@ class GitLogPanel(OptionList):
 
     def _card_left(self) -> None:
         """指针离开卡片：没有选区就隐藏；有选区保留，等点卡片外再关。"""
+        if self._details_index is not None:
+            return  # Details 钉住
         card = self._card()
         if card is None:
             return

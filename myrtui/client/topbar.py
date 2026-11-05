@@ -9,9 +9,10 @@ Enter/Leave 转成 ``HoverStart`` / ``HoverEnd`` 消息（所有按钮通用，A
 关心 ``btn-help``），避免 topbar 直接依赖 App 的私有方法。
 
 0.10.0 紧凑档（``set_compact``）：tab 只留序号（``1 2 3``），按钮文案压成
-``+ d k ?``，品牌由 CSS 隐藏（``Screen.compact #topbar-brand``）。紧凑顶栏
-宽度 = 4×3 + 4×3 = 24 列，40 列屏还剩 16 格给状态——46 列上 `?` 被挤出屏
-外是 0.9.x 的真机问题（见内部 0.10.0 计划 §0）。
+``+ X D K KEY ?``，品牌由 CSS 隐藏（``Screen.compact #topbar-brand``）。0.11.0 增加
+``KEY`` 开关（底栏显隐），紧凑顶栏仍为 1 行：宽度 = 4×3 + 6×3 = 30 列，
+40 列屏还剩 10 格给状态。46 列上 `?` 被挤出屏外是 0.9.x 的真机问题（见内部
+0.10.0 计划 §0）。
 """
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ from textual.message import Message
 from textual.widgets import Label, Static
 
 from myrtui import __version__
+from myrtui.client.flash import flash_press
 from myrtui.i18n import t
 
 # §12：1..4 布局档 → 最多 4 个 tab（与 app.MAX_PANES 对应，刻意独立成字面量
@@ -30,12 +32,13 @@ MAX_TABS = 4
 # 顶栏右上角品牌：程序名 + 包版本（源码真值；发版时与 pyproject 同步 bump）
 BRAND_TEXT = f"myrtui {__version__}"
 
-# 0.10.0 紧凑档按钮文案：`d`/`k` 与 `Ctrl-a d/k` 同字母（`k` 仍有二次确认）
+# 0.10.0 紧凑档按钮文案：`D`/`K` 与 `Ctrl-a d/k` 同字母（`K` 仍有二次确认）
 COMPACT_BUTTON_TEXTS = {
     "btn-new": " + ",
-    "btn-close": " × ",
-    "btn-detach": " d ",
-    "btn-kill": " k ",
+    "btn-close": " X ",
+    "btn-detach": " D ",
+    "btn-kill": " K ",
+    "btn-keybar": "KEY",
     "btn-help": " ? ",
 }
 
@@ -87,6 +90,7 @@ class TopBarButton(Static):
     def on_mouse_down(self, event) -> None:
         event.stop()
         if not self.disabled_btn:
+            flash_press(self)
             self.post_message(self.Pressed(self.id or ""))
 
     def _on_enter(self, event: events.Enter) -> None:
@@ -155,6 +159,9 @@ class TopBar(Static):
         yield TopBarButton(" × ", "btn-close")
         yield TopBarButton(f" {t('topbar.detach')} ", "btn-detach")
         yield TopBarButton(f" {t('topbar.kill')} ", "btn-kill")
+        keybar_btn = TopBarButton(t("keybar.toggle"), "btn-keybar")
+        keybar_btn.tooltip = t("keybar.toggle_tip")
+        yield keybar_btn
         yield TopBarButton(" ? ", "btn-help")
         yield Label("", id="topbar-status")
         yield Label(BRAND_TEXT, id="topbar-brand")
@@ -212,15 +219,23 @@ class TopBar(Static):
             if compact
             else {
                 "btn-new": " + ",
-                "btn-close": " × ",
+                "btn-close": " X ",
                 "btn-detach": f" {t('topbar.detach')} ",
                 "btn-kill": f" {t('topbar.kill')} ",
+                "btn-keybar": t("keybar.toggle"),
                 "btn-help": " ? ",
             }
         )
         for button_id, text in texts.items():
             self.query_one(f"#{button_id}", TopBarButton).update(text)
         self._render_tabs()
+
+    def set_keybar_control(self, visible: bool, on: bool) -> None:
+        """显示 / 隐藏顶栏 ``KEY`` 开关，并同步「底栏开着」的底色。"""
+        btn = self.query_one("#btn-keybar", TopBarButton)
+        if btn.display != visible:
+            btn.display = visible
+        btn.set_class(visible and on, "active")
 
     def set_status(self, text: str) -> None:
         """顶部状态提示（如「与会话失去连接」）。"""
