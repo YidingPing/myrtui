@@ -154,7 +154,8 @@ the full cheat sheet. Full tables: [docs/USAGE.md](docs/USAGE.md#key-bindings).
 | `MYRTUI_DRAG_SELECT` | `smart` (default) = the program gets the drag when it asked for mouse (its own selection UI works), Shift+drag selects locally; `always` = drag always selects; `app` = forward every drag to the program |
 | `MYRTUI_CLIPBOARD` | copy channels: `auto` (default: OSC 52 + native clipboard command) / `osc52` / `system` |
 | `MYRTUI_CLIPBOARD_PASSTHROUGH` | forward copies made by programs inside panes (opencode's select-to-copy, `vim "+y`) to your clipboard (default on; `0` disables) |
-| `MYRTUI_OUTER_MUX_HINT` | show the startup hint when myrtui itself runs inside another tmux/screen (default on; `0` disables) |
+| `MYRTUI_OUTER_MUX_HINT` | when myrtui runs inside another tmux/screen, read that server's live `MouseDrag1Pane` binding; if it swallows drags, show the fix command on the top bar (or in `myrtui.log` when it does not fit) — a healthy binding is left alone (default on; `0` disables probe and hint) |
+| `MYRTUI_OUTER_TMUX_SOCKET` | explicit outer tmux socket, when the automatic detection (parent process tree) cannot find it |
 | `MYRTUI_GRAPHICS` | bitmap protocol: `auto` (default) / `sixel` / `tgp` / `unicode` / `off` |
 | `MYRTUI_PAGE_THEME` | LaTeX page theme: `sepia` (default) / `paper` / `gray` / `white` / `dim` / `dark` |
 | `MYRTUI_MATH_BACKEND` | math backend for Markdown preview: `auto` (default) / `plain` / `termtex` |
@@ -179,9 +180,11 @@ the full cheat sheet. Full tables: [docs/USAGE.md](docs/USAGE.md#key-bindings).
   clipboard through its own native command bypasses this, which is fine locally and
   usually wrong over SSH.
 - **An outer tmux can steal the drag** — if myrtui itself runs inside a multiplexer
-  (UU Remote's terminal is one), that server's mouse bindings run first and a drag may
-  never arrive. myrtui shows a startup hint when it detects one; the one-line fix is in
-  USAGE under "Inside another tmux".
+  (UU Remote's terminal is one), that server's mouse bindings run first and every
+  motion of a drag may never arrive (UU ships a `MouseDrag1Pane` that always enters
+  copy-mode). myrtui reads the live binding at startup and puts the one-line fix on
+  the top bar when it is wrong; a healthy binding stays silent. Details in USAGE
+  under "Inside another tmux".
 - **Echo latency ~150 ms when idle** — tmux capture is polled; typing raises the
   rate to ~30 ms.
 

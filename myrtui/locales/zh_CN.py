@@ -183,7 +183,10 @@ MESSAGES: dict[str, str] = {
 
     # ---- 应用外壳：菜单 / 状态栏 / 提示（app.py）---------------------------
     "app.paste_hint": "用终端自己的粘贴：macOS Cmd+V · Windows Terminal Ctrl+V · Tabby Ctrl+Shift+V",
-    "app.outer_mux_hint": "检测到外层 tmux：拖动选字失效时，在其中执行 tmux set -g mouse off（文档「外层 tmux」；UU 远程需恢复 MouseDrag1Pane）",
+    "app.outer_mux_hint": "检测到外层 tmux：拖动被它吃掉时，需在其中把 MouseDrag1Pane 改回默认判定（文档「在外层 tmux 里」）",
+    "app.outer_mux_hint_bad": "外层 tmux 吃拖拽 → {cmd}",
+    "app.outer_mux_hint_cmd": "修复：{cmd}",
+    "app.outer_mux_hint_bad_short": "外层 tmux 吃掉拖拽：完整修复命令已写入 myrtui.log",
     "app.job.list_panes": "list-panes 失败",
     "app.job.backend": "backend 调用",
     "menu.image_preview": "预览图片",

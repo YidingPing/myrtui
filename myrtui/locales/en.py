@@ -186,7 +186,10 @@ MESSAGES: dict[str, str] = {
 
     # ---- app shell: menus, status bar, notices (app.py) --------------------
     "app.paste_hint": "Paste with your terminal: macOS Cmd+V · Windows Terminal Ctrl+V · Tabby Ctrl+Shift+V",
-    "app.outer_mux_hint": "Outer tmux detected: if dragging does not select, run tmux set -g mouse off in it (USAGE: Inside another tmux; UU Remote needs MouseDrag1Pane restored)",
+    "app.outer_mux_hint": "Outer tmux detected: if it swallows drags, restore the default MouseDrag1Pane check inside it (USAGE: Inside another tmux)",
+    "app.outer_mux_hint_bad": "outer tmux eats drags -> {cmd}",
+    "app.outer_mux_hint_cmd": "fix: {cmd}",
+    "app.outer_mux_hint_bad_short": "Outer tmux swallows drags: the full fix command is in myrtui.log",
     "app.job.list_panes": "list-panes failed",
     "app.job.backend": "backend call",
     "menu.image_preview": "Preview image",

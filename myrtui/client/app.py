@@ -14,6 +14,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
+from rich.cells import cell_len
 from rich.control import Control
 from textual import work
 from textual.app import App, ComposeResult
@@ -54,7 +55,13 @@ from myrtui.mouse import (
     wheel,
 )
 from myrtui.i18n import t
-from myrtui.termenv import HINT_ENV, hint_enabled, outer_multiplexer
+from myrtui.termenv import (
+    HINT_ENV,
+    DragProbe,
+    hint_enabled,
+    outer_multiplexer,
+    probe_drag_forwarding,
+)
 from myrtui.tmux_backend import CaptureResult, PaneInfo, TmuxBackend, TmuxError
 
 import os as _os
@@ -111,6 +118,9 @@ NOTICE_SECONDS = 2.0  # v0.13 顶栏瞬时提示（复制结果等）驻留时�
 # 0.8.0：识别到外层 tmux / screen 时那条排障提示的驻留时长。比普通提示长得多
 # ——它是一条要用户动手的命令，2 秒根本读不完；只在外层复用器在场时出现一次。
 OUTER_MUX_HINT_SECONDS = 10.0
+# 0.11.1：探到外层绑定确实吞掉拖动时，顶栏放的是**可以直接粘贴的修复命令**——
+# 要留出读它、抄它的时间（外层还吃拖拽时连本机选区都用不了，只能肉眼抄）。
+OUTER_MUX_FIX_SECONDS = 20.0
 # ── v0.35 拖拽选字 / 松手自动复制 ─────────────────────────────────────
 DRAG_THRESHOLD_CELLS = 2  # 指针移动 ≥ 2 格才算拖拽（1 格内容忍手抖，仍按点击）
 THAW_DELAY = 0.6  # 自动复制后高亮保留时长（秒），让用户看清复制了什么
@@ -2083,15 +2093,89 @@ class TerminalApp(App, inherit_bindings=False):
             self.set_interval(SENTRY_INTERVAL, self._check_takeover)
         # 0.7.0 起 pane 内的复制走 OSC 52 直通，鼠标拖动默认归程序（smart）；
         # 但外层复用器可能先把拖动收走（UU 远程的 tmux 实测：按下能到，按住
-        # 期间的 motion 全进 copy-mode）。这里只在识别到外层复用器时提示一次，
-        # 绝不改用户终端的配置——那条命令由用户自己决定要不要跑。
+        # 期间的 motion 全进 copy-mode）。绝不改用户终端的配置——只把**探测到
+        # 的真实绑定**转成一句可执行的提示（0.11.1），改不改由用户决定。
         if (
             outer_multiplexer(_os.environ) is not None
             and hint_enabled(_os.environ.get(HINT_ENV))
         ):
-            self._notify(t("app.outer_mux_hint"), seconds=OUTER_MUX_HINT_SECONDS)
+            self._probe_outer_mux()
         if self._loop_debug:
             self._install_loop_probe()
+
+    @work(exclusive=True, group="outermux", exit_on_error=False)
+    async def _probe_outer_mux(self) -> None:
+        """读外层 tmux 的真实 ``MouseDrag1Pane`` 绑定 → 决定提示说什么。
+
+        **必须离开 UI 线程**：探测要 fork ``ps`` / ``tmux``（各 ~5–20 ms），
+        而 on_mount 是首帧路径。形态与 ``_load_git_log`` 一致——async worker +
+        ``asyncio.to_thread``（``@work(thread=True)`` 配 async 方法拿到的只是
+        未 await 的 coroutine，取数会静默不执行，见 R9）。
+
+        探不到（``None``）不是错误：外层可能是 screen、socket 不可达、或恰好
+        没有权限 → 退回 0.8.0 的通用提示。
+        """
+        probe = await asyncio.to_thread(
+            probe_drag_forwarding, _os.environ, _os.getpid()
+        )
+        self._apply_outer_mux_notice(probe)
+
+    def _apply_outer_mux_notice(
+        self, probe: DragProbe | None, retry: bool = True
+    ) -> None:
+        """把探测结果变成一条顶栏提示。
+
+        - 绑定已经把拖动转发给程序（0.11.1）→ **不提示**。修好之后还每次弹一条
+          已经没用的排障文案，是 UU 用户每天都要看的噪音；
+        - 绑定确实吞掉拖动 → 顶栏放**完整修复命令**。命令 181 字符，宽终端
+          （实测 280 列、4 个长 tab 时 ``#topbar-status`` 有 205–218 cell）放得下
+          整句；放不下就只留「修复：+ 命令」；再放不下才退回一句短的（完整命令
+          始终进日志）。**绝不显示被截断的命令**——那比不显示更糟（用户会照着
+          一半的命令粘贴）；
+        - 探不到 → 0.8.0 的通用提示。
+        """
+        if probe is None:
+            self._notify(t("app.outer_mux_hint"), seconds=OUTER_MUX_HINT_SECONDS)
+            return
+        if not probe.needs_fix:
+            log.debug(
+                "outer mux binding forwards the drag (%s): %s",
+                probe.server.socket, probe.binding,
+            )
+            return
+        # 落盘（WARNING → myrtui.log）：顶栏放不下时它是唯一的完整出口。
+        log.warning(
+            "outer tmux (%s) sends MouseDrag1Pane to copy-mode regardless of "
+            "mouse_any_flag, so drags never reach this program; re-run after "
+            "the outer server restarts: %s",
+            probe.server.socket, probe.command,
+        )
+        width = self._topbar_status_width()
+        if width <= 0 and retry:
+            # 首帧可能还没排版（探测回投早于布局）→ 等一帧再量，避免在宽终端
+            # 上误退回短句。只重试一次，绝不成环。
+            self.call_after_refresh(self._apply_outer_mux_notice, probe, False)
+            return
+        # 三档：整句 → 只留「修复：」+ 命令 → 短句（完整命令始终进日志）。
+        # 280 列、4 个长 tab 时状态区实测 205–214 cell，而命令本身 181 ——
+        # 整句放不下时至少还能把命令留下，别让用户去翻日志。
+        for text in (
+            t("app.outer_mux_hint_bad", cmd=probe.command),
+            t("app.outer_mux_hint_cmd", cmd=probe.command),
+        ):
+            if width > 0 and cell_len(text) <= width:
+                self._notify(text, seconds=OUTER_MUX_FIX_SECONDS)
+                return
+        self._notify(
+            t("app.outer_mux_hint_bad_short"), seconds=OUTER_MUX_FIX_SECONDS
+        )
+
+    def _topbar_status_width(self) -> int:
+        """顶栏状态区当前可用 cell 数（0 = 还没排版）。"""
+        try:
+            return self.query_one("#topbar-status", Label).size.width
+        except NoMatches:  # teardown 竞态
+            return 0
 
     def _install_loop_probe(self) -> None:
         """``MYRTUI_LOOP_DEBUG=1``：事件循环迟到遥测（§4.2 可选，§7.2 数据源）。

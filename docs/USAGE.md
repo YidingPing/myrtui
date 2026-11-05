@@ -435,15 +435,30 @@ what was copied. `MYRTUI_DRAG_SELECT=always` takes every drag back (v0.35).
 ### Inside another tmux (UU Remote, a local mirror)
 
 myrtui can itself run inside another multiplexer — **UU Remote's terminal is a
-tmux 3.5a session**. When that outer tmux has `mouse on` and overrides the root
-`MouseDrag1Pane` binding, it grabs the drag: the press reaches myrtui, every
-motion in between is eaten by copy-mode, and the release copies the outer
-selection instead. The symptom is *"dragging selects nothing, but something does
-land in the clipboard"*. myrtui detects an outer tmux/screen at startup and
-shows a one-line hint; the fix always lives in the outer server.
+tmux 3.5a session**, and its app bundle ships a `MouseDrag1Pane` binding that
+sends *every* drag to copy-mode, ignoring `mouse_any_flag`:
 
-Restore tmux's default binding (forward the drag to panes that asked for the
-mouse, keep copy-mode for the rest). For UU Remote:
+```sh
+bind -Troot MouseDrag1Pane if-shell -F "#{pane_in_mode}" "send -X begin-selection" "copy-mode -M"
+```
+
+The press still reaches myrtui, every motion in between is eaten by copy-mode,
+and the release copies the outer selection instead. The symptom is *"dragging
+selects nothing, but something does land in the clipboard"* — and it is also why
+`opencode` never sees its own drag-to-copy: its selection UI needs the motion, so
+it never draws a selection and never emits the OSC 52 that myrtui forwards.
+
+At startup myrtui reads the **live** binding of the outer server (the socket is
+found by walking the parent process tree and verified by pid, so a different tmux
+on the same machine is never mistaken for it). If the binding is the
+unconditional one, the top bar carries the exact fix command — on a wide
+terminal as-is (the command is ~181 characters, so it needs roughly 230 columns;
+medium widths keep the command with a shorter prefix),
+otherwise a one-liner plus the full command in `myrtui.log`. A binding that
+already forwards the drag is left alone, silently.
+
+Restore tmux's default check (forward to panes that asked for the mouse, keep
+copy-mode for the rest):
 
 ```sh
 UU="/Applications/UURemote.app/Contents/Helpers/tmux/uuyc-mux"
@@ -458,11 +473,31 @@ with `list-keys -T root | grep MouseDrag1Pane`. Afterwards a drag over a program
 that requested the mouse is forwarded (myrtui then applies `MYRTUI_DRAG_SELECT`),
 while dragging plain shell output still copies through the outer tmux.
 
-The binding lives in the outer server and is lost when it restarts — re-run the
-command (a shell function in your `~/.zshrc` is enough; do not edit the file
-inside the UU app bundle, upgrades and code signing will fight you). `tmux set -g
-mouse off` is the blunt alternative: every mouse event goes to the program, but
-the outer tmux's own drag-to-copy is gone.
+The binding lives in the outer server's memory (it is server-wide, so running the
+command once fixes every window attached to that server), and **UU reloads its own
+copy from the app bundle every time that server starts** — so the fix has to be
+re-applied per server lifetime. A shell function in your `~/.zshrc` is the least
+annoying way (it is a no-op when the UU socket is absent):
+
+```sh
+myrtui-outer-fix() {
+  local UU="/Applications/UURemote.app/Contents/Helpers/tmux/uuyc-mux"
+  local S="$HOME/Library/Application Support/UURemote/tmux.sock"
+  [ -S "$S" ] || return 0
+  "$UU" -S "$S" bind -Troot MouseDrag1Pane \
+    if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' \
+    'send-keys -M' 'copy-mode -M'
+}
+myrtui-outer-fix
+```
+
+Do not edit the config inside the UU app bundle: upgrades and code signing will
+fight you. `tmux set -g mouse off` is the blunt alternative — every mouse event
+goes to the program, but the outer tmux's own drag-to-copy disappears with it.
+
+While the outer tmux is still eating drags, **its own copy-mode is the way to copy
+anything off myrtui's screen** — including the fix command in the top bar: drag
+over it, release, and the rendered line (command and all) lands in the clipboard.
 
 ## Environment variables
 
@@ -477,7 +512,8 @@ the outer tmux's own drag-to-copy is gone.
 | `MYRTUI_COPY_ON_SELECT` | `1` | auto-copy on drag release (`0/false/no/off` disables) |
 | `MYRTUI_CLIPBOARD` | `auto` | copy channels: `auto` = OSC 52 + system command, `osc52` = terminal only, `system` = native clipboard command only |
 | `MYRTUI_CLIPBOARD_PASSTHROUGH` | `1` | forward copies made by programs inside panes (OSC 52) to the terminal / system clipboard (`0/false/no/off` disables) |
-| `MYRTUI_OUTER_MUX_HINT` | `1` | show the one-line "outer tmux detected" hint at startup when myrtui runs inside another tmux/screen (`0/false/no/off` disables) |
+| `MYRTUI_OUTER_MUX_HINT` | `1` | show the "outer tmux detected" hint at startup when myrtui runs inside another tmux/screen: it reads the *live* `MouseDrag1Pane` binding and, if that binding swallows drags, prints the fix command on the top bar (or in `myrtui.log` when it does not fit); `0/false/no/off` disables the probe and the hint |
+| `MYRTUI_OUTER_TMUX_SOCKET` | — | explicit outer tmux socket, when the automatic detection (parent process tree) cannot find it |
 | `MYRTUI_DRAG_SELECT` | `smart` | `smart` = the program gets the drag when it asked for mouse, Shift+drag selects locally; `always` = drag always selects; `app` = forward every drag to the program |
 | `MYRTUI_GRAPHICS` | `auto` | `auto` / `sixel` / `tgp` / `unicode` / `off` (preview bitmaps only) |
 | `MYRTUI_CELL_PX` | — | override cell size in pixels (`10x20`) when the terminal does not report it |

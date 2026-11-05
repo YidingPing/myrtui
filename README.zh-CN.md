@@ -139,6 +139,8 @@ myrtui                 # 首次运行创建会话，之后都是 attach
 | `MYRTUI_LOG` | TUI 接管终端后 warning 写到哪里（默认平台日志目录，如 `~/Library/Logs/myrtui/myrtui.log`；空串关闭） |
 | `MYRTUI_COPY_ON_SELECT` | 拖拽松手自动复制（默认 `1`；`0` 时用 `Ctrl-a c` 手动复制） |
 | `MYRTUI_DRAG_SELECT` | `always`（默认）= 拖拽永远选字；`app` = 程序请求鼠标时把拖拽还给它 |
+| `MYRTUI_OUTER_MUX_HINT` | 在外层 tmux / screen 里时读出它真实的 `MouseDrag1Pane` 绑定；会吞掉拖动才提示并给出修复命令（放不下就写 `myrtui.log`），绑定正常就闭嘴（默认开） |
+| `MYRTUI_OUTER_TMUX_SOCKET` | 显式指定外层 tmux 的 socket（自动探测靠祖先进程的 argv） |
 | `MYRTUI_GRAPHICS` | 位图协议：`auto`（默认）/ `sixel` / `tgp` / `unicode` / `off` |
 | `MYRTUI_PAGE_THEME` | `v` 排版页面配色：`sepia`（默认）/ `paper` / `gray` / `white` / `dim` / `dark` |
 | `MYRTUI_MATH_BACKEND` | Markdown 公式后端：`auto`（默认）/ `plain` / `termtex` |

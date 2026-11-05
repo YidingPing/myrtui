@@ -111,7 +111,8 @@ window/pane 创建时快照选项，`Ctrl-a r` 重开的也是建窗时记录的
 | `MYRTUI_DRAG_SELECT` | `smart`（默认）= 真终端约定：pane 内程序请求了鼠标就把拖动转给它（vim `mouse=a`、`ov` 拖选、opencode 选择即复制），**Shift + 拖动**才由 myrtui 选字；`always` = 左键拖拽**永远**由 myrtui 选字（v0.35 行为）；`app` = 只要程序请求了鼠标就转给它，没有 Shift 逃生口。 |
 | `MYRTUI_CLIPBOARD` | 复制通道：`auto`（默认，OSC 52 + 系统命令都发）/ `osc52`（只发 OSC 52）/ `system`（只调系统命令）。非法值告警后按 `auto`。 |
 | `MYRTUI_CLIPBOARD_PASSTHROUGH` | 是否把 **pane 内程序发起的复制**（OSC 52）转发到终端 / 系统剪贴板（默认开；`0/false/no/off` 关闭）。 |
-| `MYRTUI_OUTER_MUX_HINT` | 启动时检测到外层 tmux / screen 是否提示一次排障文案（默认开；`0/false/no/off` 关闭）。 |
+| `MYRTUI_OUTER_MUX_HINT` | 启动时检测到外层 tmux / screen 后，**读出它真实的 `MouseDrag1Pane` 绑定**再决定说什么：绑定会吞掉拖动才提示（宽终端顶栏直接给修复命令，窄终端只写 `myrtui.log`），绑定正常就闭嘴（默认开；`0/false/no/off` 连探测都不做）。 |
+| `MYRTUI_OUTER_TMUX_SOCKET` | 显式指定外层 tmux 的 socket（自动探测靠祖先进程的 argv，探测不到时用它兜底）。 |
 | `MYRTUI_GRAPHICS` | 预览位图协议：`auto`（默认，启动时探测终端）/ `sixel` / `tgp` 强制 / `unicode` / `off` 关闭。缺 `textual-image`、非 tty、探测失败都等同 `unicode`；非法值告警后回落 `auto`。只影响图片与 LaTeX 整篇版面。 |
 | `MYRTUI_CHROME` | 指定 Chrome/Chromium（`v` LaTeX 整篇排版用；默认常见安装路径 → `PATH` 探测）。 |
 | `MYRTUI_CELL_PX` | 覆盖终端单元格像素尺寸（如 `10x20`）；终端不回报 cell 尺寸时用它校正图片与整篇版面的像素换算。 |
@@ -252,14 +253,28 @@ opencode）时，拖动**转给程序**：它自己的选区 UI 能用，它复�
 ### 在外层 tmux 里（UU 远程、本地镜像）
 
 myrtui 自己可以被套在另一层复用器里——**UU 远程的终端本身就是一个 tmux 3.5a
-会话**。外层如果 `mouse on` 且覆盖了 root 表的 `MouseDrag1Pane`，它会在第一次
-拖动时进 copy-mode：按下能到 myrtui，**按住期间的 motion 全被吃掉**，松手时
-`copy-pipe pbcopy` 把外层选区写进剪贴板。症状是「拖动选不中，但剪贴板里多了点
-东西」。myrtui 启动时能识别外层 tmux / screen 并给一行提示；真正的修法在外层
-服务端。
+会话**，而且它的 app bundle 里就带着一条把**所有**拖动送进 copy-mode、完全
+不看 `mouse_any_flag` 的绑定：
 
-把 tmux 的默认绑定恢复回去（要鼠标的程序转发给它，其余仍走 copy-mode）。UU
-远程：
+```sh
+bind -Troot MouseDrag1Pane if-shell -F "#{pane_in_mode}" "send -X begin-selection" "copy-mode -M"
+```
+
+按下能到 myrtui，**按住期间的 motion 全被 copy-mode 吃掉**，松手时
+`copy-pipe pbcopy` 把外层选区写进剪贴板。症状是「拖动选不中，但剪贴板里多了点
+东西」；也解释了为什么 opencode 自己的「选择即复制」永远出不来——它的选区 UI
+需要 motion，收不到就画不出选区，也就不会发那条要被 myrtui 转发的 OSC 52。
+
+启动时 myrtui 会**读出外层 server 真实的绑定**（socket 从祖先进程的 argv 找，
+再用 pid 验证，本机并存的别的 tmux 不会被误判）。只有确认它是上面那种
+「无条件 copy-mode」才会出声：
+
+- 宽终端（那条命令约 181 字符，整句约需 230 列）→ 顶栏直接显示**可以直接粘贴的
+  修复命令**；稍窄时只留「修复：+ 命令」，再窄才退化成一句短的；
+- 窄终端 → 顶栏一句短的，完整命令写进 `myrtui.log`（绝不显示被截断的命令）；
+- 绑定本来就会转发 → **什么都不说**（修好了还每天弹一条排障文案就是噪音）。
+
+把 tmux 的默认判定改回去（要鼠标的 pane 转发给程序，其余仍走 copy-mode）：
 
 ```sh
 UU="/Applications/UURemote.app/Contents/Helpers/tmux/uuyc-mux"
@@ -274,10 +289,28 @@ S="$HOME/Library/Application Support/UURemote/tmux.sock"
 拖动 → 转给程序（myrtui 再按 `MYRTUI_DRAG_SELECT` 处理）；在普通 shell 输出上
 拖动 → 仍走外层的拖选复制。
 
-绑定只存在于外层 server 的运行时，它一重启就没了——再跑一次即可（写进
-`~/.zshrc` 的函数最省事；**不要**去改 UU app bundle 里的 `uuremote.conf`，升级
-与签名都会踩）。粗暴替代是 `tmux set -g mouse off`：所有鼠标事件都交给程序，代价
-是外层自己的拖选复制也没了。
+绑定只存在于外层 server 的运行时（它是 **server 级**的：跑一次，连到这个 server 的
+所有窗口一起生效），而 **UU 每次启动 server 都会从 app bundle 重新加载它自己那份**
+——所以修复必须按 server 的生命周期重跑。写进 `~/.zshrc` 的函数最省事（socket
+不存在时它是空操作）：
+
+```sh
+myrtui-outer-fix() {
+  local UU="/Applications/UURemote.app/Contents/Helpers/tmux/uuyc-mux"
+  local S="$HOME/Library/Application Support/UURemote/tmux.sock"
+  [ -S "$S" ] || return 0
+  "$UU" -S "$S" bind -Troot MouseDrag1Pane \
+    if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' \
+    'send-keys -M' 'copy-mode -M'
+}
+myrtui-outer-fix
+```
+
+**不要**去改 UU app bundle 里的 `uuremote.conf`，升级与签名都会踩。粗暴替代是
+`tmux set -g mouse off`：所有鼠标事件都交给程序，代价是外层自己的拖选复制也没了。
+
+外层还在吃拖拽的时候，**外层 copy-mode 本身就是从 myrtui 屏幕复制东西的出口**
+——包括顶栏那条修复命令：在顶栏上拖动、松手，渲染出来的整行（含命令）就进了剪贴板。
 
 ## 在手机上
 
