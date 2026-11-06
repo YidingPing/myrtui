@@ -194,14 +194,15 @@ class DirectImage(Widget):
         _write(tmux_wrap("".join(delete_sequence(i) for i in ids)))
 
     def set_image(self, image) -> None:
-        """换一张图：**换新 id**（有终端对同 id 重传不重绘，画面会停在第一页）。
+        """换一张图：**换新 id** 并重贴，但**不** ``refresh()``。
 
-        旧 id 只记下来、不当场删——见 :meth:`paint` 的注释。
+        真机反证：把控件标脏会触发一次「重画空格」，这个 app 的空白单元格会把
+        已经贴上的图擦掉（按 `v` 首帧能看见、翻页就没了、开关软键盘触发 resize
+        后又能看见——全对得上）。控件内容本来就是空格，换图不需要重画。
         """
         self._retired.append(self.image_id)
         self.image_id = next_image_id()
         self._payload = png_bytes(image)
         self._cols = self._rows = 0
         self._sequence = ""
-        self.refresh()
         self._paint_soon()

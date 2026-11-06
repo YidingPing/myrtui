@@ -122,6 +122,19 @@ def test_set_image_deletes_the_old_page_before_transmitting(monkeypatch):
     assert f"a=d,d=I,i={widget.image_id}" in written[-1]
 
 
+def test_set_image_does_not_repaint_the_widget(monkeypatch):
+    """换图不能把控件标脏：重画空格会把已贴的图擦掉（真机：翻页后空白）。"""
+    written: list[str] = []
+    monkeypatch.setattr(directimage, "_write", written.append)
+
+    widget = _Placed(b"page-1", cols=8, rows=2)
+    refreshed: list[bool] = []
+    monkeypatch.setattr(widget, "refresh", lambda *a, **kw: refreshed.append(True))
+
+    widget.set_image(b"page-2")
+    assert refreshed == []
+
+
 def test_png_bytes_accepts_path_bytes_and_pil(tmp_path):
     path = tmp_path / "a.png"
     path.write_bytes(b"raw-png")
