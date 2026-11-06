@@ -59,9 +59,11 @@ Only measured rows are listed: a terminal missing from this table is
 **untested**, not unsupported. Without a bitmap protocol the previews show
 metadata and a hint instead of an image; nothing breaks and no pane is affected.
 A terminal that draws images but not Unicode placeholders still gets the `v`
-page view and the image preview through Kitty's direct display (`a=T`) — see
-[Open and preview](../docs/USAGE.md#open-and-preview).
-**Inside an outer tmux, bitmaps are off**: tmux does not forward Sixel — it
+page view and the image preview through Kitty's direct display (`a=T`) — inside
+tmux that additionally needs `set -g allow-passthrough on`. Measured on a phone
+over SSH (50×43, inside tmux 3.8): the page view renders and flips page by page.
+See [Open and preview](../docs/USAGE.md#open-and-preview).
+**Inside an outer tmux, Sixel is off**: tmux does not forward it — it
 substitutes a `SIXEL IMAGE (WxH)` placeholder made of `+` cells — and adding
 `sixel` to `terminal-features` does not change that (measured on tmux 3.8).
 Kitty TGP can pass through (`set -g allow-passthrough on`) when the terminal

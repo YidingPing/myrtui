@@ -51,12 +51,14 @@ pane。一个项目一个会话，退出再进来还是原来的布局。
 
 表里只列**实测过**的终端：没出现不等于不支持，只等于**没测过**。没有位图协议时
 预览会显示元信息与提示，不会白屏，也不影响 pane。能画图但不支持 Unicode 占位符的
-终端，`v` 整页视图和图片预览仍可通过 Kitty 的**直接贴图**（`a=T`）显示——
-见 [位图](../docs/USAGE.zh-CN.md) 一节。**在外层 tmux 里位图是关闭的**：
-tmux 不转发 Sixel，而是把它换成 `SIXEL IMAGE (宽x高)` 加一整屏 `+`（tmux 3.8
-实测；往 `terminal-features` 里加 `sixel` 也没用）。Kitty TGP 可以靠
-`set -g allow-passthrough on` 穿透，但终端必须实现 Unicode 占位符——myrtui
-两项都确认后才启用。见 [docs/USAGE.zh-CN.md](docs/USAGE.zh-CN.md) 的「在外层 tmux 里」一节。
+终端，`v` 整页视图和图片预览仍可通过 Kitty 的**直接贴图**（`a=T`）显示——在 tmux
+里还需要 `set -g allow-passthrough on`。已在 **手机 SSH（50×43，tmux 3.8 内）**实测：
+整页出图、逐页翻页正常。见 [docs/USAGE.zh-CN.md](docs/USAGE.zh-CN.md)。**在外层
+tmux 里 Sixel 是关闭的**：tmux 不转发 Sixel，而是把它换成 `SIXEL IMAGE (宽x高)`
+加一整屏 `+`（tmux 3.8 实测；往 `terminal-features` 里加 `sixel` 也没用）。
+Kitty TGP 可以靠 `set -g allow-passthrough on` 穿透，但终端必须实现 Unicode
+占位符——myrtui 两项都确认后才启用。见 [docs/USAGE.zh-CN.md](docs/USAGE.zh-CN.md)
+的「在外层 tmux 里」一节。
 
 ### 移动端
 

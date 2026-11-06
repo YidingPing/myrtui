@@ -574,8 +574,9 @@ myrtui-outer-fix
 
 > **能画图、但不会占位符的终端**（部分手机 SSH app）：`v` 整页视图和图片预览
 > 仍可用 —— myrtui 会探测 Kitty 的**直接贴图**（`a=T`，一屏一张静态图）并在
-> 占位符不可用时改用它。滚动的内容（正文里的公式 / 图片）不适用：直接贴的图
-> 不跟文字滚动，那里继续用 termtex Unicode / alt。
+> 占位符不可用时改用它；在 tmux 里这条路同样要求 `set -g allow-passthrough on`。
+> 滚动的内容（正文里的公式 / 图片）不适用：直接贴的图不跟文字滚动，那里继续用
+> termtex Unicode / alt。
 
 > v0.36 只做 Unicode 公式与 GFM 文本；v0.37 在此之上加图片位图；v0.4 起
 > 文本预览的公式**只走 termtex**，整篇 LaTeX 排版用 `v`。Mermaid / 搜索 /

@@ -372,8 +372,9 @@ README under [Terminal support](../README.md#terminal-support).
 A terminal that draws images but **not** Unicode placeholders (some mobile SSH
 clients) still gets the `v` page view and the image preview: myrtui probes Kitty's
 direct display (`a=T`, one still image per screen) and uses it when placeholders
-are unavailable. Scrolling views keep the text fallbacks — a direct-display image
-does not move with the text.
+are unavailable; inside tmux that path also needs
+`set -g allow-passthrough on`. Scrolling views keep the text fallbacks — a
+direct-display image does not move with the text.
 
 ## Splitters
 
