@@ -297,6 +297,7 @@ a full-screen read-only screen:
 | `r` | re-read from disk and re-render (scroll position is kept when possible) |
 | `v` | LaTeX typesetting view (KaTeX page bitmaps, see below) |
 | `p` | export the whole document as an **A4 PDF** (see below) |
+| `m` | export a **phone-reading PDF** (A4 at 12 pt, 6 mm margins) |
 | arrows / `PgUp` / `PgDn` / `Home` / `End` / wheel | scroll |
 
 Rendering: GFM headings, paragraphs, lists, tables, quotes, code blocks
@@ -346,6 +347,16 @@ rather than being clipped. Requires Chrome/Chromium (same as `v`;
 `MYRTUI_CHROME` overrides the binary). There are **no page numbers**: Chrome
 cannot stamp them without an extra PDF library, and this repo does not add
 runtime dependencies for that.
+
+**Phone-reading PDF** (`m`): the same document and the same pipeline, but
+typeset for a phone screen: still **A4** (a wide page keeps formulas and tables
+from being squeezed into a narrow column), body text **12 pt** (vs 10.5 pt) and
+**6 mm** margins (vs 16/14 mm). The file lands next to the source as
+`<stem>.phone.pdf`, so it never overwrites the A4 export. Over-wide formulas,
+code blocks and tables are scaled down to the page width instead of being
+clipped — rotate the phone or zoom in to read those. Like `p`, it needs
+Chrome/Chromium and writes the file atomically; unlike `p`, the 6 mm margin is
+for on-screen reading, not for physical printers.
 
 **Preview image** works for `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.bmp`,
 `.tif`, `.tiff`, `.ico`, `.avif`:

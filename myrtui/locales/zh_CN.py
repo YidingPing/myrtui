@@ -128,7 +128,7 @@ MESSAGES: dict[str, str] = {
     "img.widget_failed": "图片控件构造失败",
     "img.loading": "加载中…",
     # ---- Markdown 预览（mdpreview.py）--------------------------------------
-    "md.footer": "Esc 返回 · r 重载 · v LaTeX 排版 · p 导出 A4 PDF · ↑↓/PgUp/PgDn 滚动",
+    "md.footer": "Esc 返回 · r 重载 · v LaTeX 排版 · p 导出 A4 PDF · m 导出手机 PDF · ↑↓/PgUp/PgDn 滚动",
     "md.changed": "文件已被外部改动 · r 重载",
     "md.no_links": "预览不打开链接",
     "md.rendering": "渲染中…",
@@ -138,6 +138,7 @@ MESSAGES: dict[str, str] = {
     "md.render_failed": "Markdown 渲染失败（r 可重试）",
     "md.not_ready": "文档还没渲染好",
     "md.export_running": "正在导出 A4 PDF…",
+    "md.export_running_phone": "正在导出手机 PDF…",
     "md.export_ok": "已导出 {path}",
     "md.export_failed": "PDF 导出失败：{exc}",
     "md.export_timeout": "PDF 导出超时（{seconds}s）",

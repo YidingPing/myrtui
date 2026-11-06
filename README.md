@@ -39,8 +39,9 @@ where you left it.
   context menu for open / preview / copy path.
 - **Git history panel** — repo-wide or per file, hover a commit for details.
 - **Markdown preview** with GFM, `$math$` via `termtex`, optional full-page
-  LaTeX typesetting through KaTeX on a sepia page (`v`), and a one-key **A4 PDF
-  export** (`p`) for printing or sending.
+  LaTeX typesetting through KaTeX on a sepia page (`v`), a one-key **A4 PDF
+  export** (`p`) for printing or sending, and a **phone-reading PDF** (`m`,
+  A4 at 12 pt with 6 mm margins).
 - **Image preview** with Sixel / Kitty graphics where the terminal supports it.
 - **Selection and clipboard** that actually work inside a TUI: drag to select,
   release to copy (OSC 52 + native clipboard commands).

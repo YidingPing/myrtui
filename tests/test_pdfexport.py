@@ -1,4 +1,4 @@
-"""A4 PDF 导出（``mdpreview`` 的 ``p`` / ``client/pdfexport.py``）。
+"""PDF 导出（``mdpreview`` 的 ``p`` / ``m`` / ``client/pdfexport.py``）。
 
 覆盖四块：
 
@@ -96,6 +96,32 @@ def test_target_for_is_next_to_the_source(tmp_path):
     assert pdfexport.target_for("README") == Path("README.pdf")
 
 
+def test_target_for_phone_does_not_overwrite_the_a4_file(tmp_path):
+    """``m`` 与 ``p`` 并存：手机版必须落到另一个文件名。"""
+    assert (
+        pdfexport.target_for(tmp_path / "notes.md", pdfexport.PHONE)
+        == tmp_path / "notes.phone.pdf"
+    )
+
+
+def test_print_html_phone_preset_is_a4_with_tight_margins():
+    """手机版仍是 A4：只换字号（12 pt）和边距（6 mm）。"""
+    html = pdfexport.build_print_html("# t\n", title="doc", preset=pdfexport.PHONE)
+    assert "@page { size: A4; margin: 6mm; }" in html
+    assert "font: 12pt/1.6" in html
+
+
+def test_phone_preset_scales_overwide_blocks_but_a4_does_not():
+    """超宽公式 / 代码块 / 表格只在手机版缩到页宽；A4 打印版保持原样。"""
+    phone = pdfexport.build_print_html("```\nx\n```\n", preset=pdfexport.PHONE)
+    assert "querySelectorAll('.katex-display')" in phone
+    assert "querySelectorAll('pre')" in phone
+    assert "querySelectorAll('table')" in phone
+    assert "getBoundingClientRect" in phone
+    a4 = pdfexport.build_print_html("```\nx\n```\n")
+    assert "getBoundingClientRect" not in a4
+
+
 # ---------------------------------------------------------------------------
 # 导出链路（fake runner）
 # ---------------------------------------------------------------------------
@@ -137,6 +163,13 @@ def test_export_writes_target_and_cleans_temp(tmp_path):
     assert any(arg.startswith("--print-to-pdf=") for arg in command)
     assert "--no-pdf-header-footer" in command
     assert "--virtual-time-budget=3000" in command
+
+
+def test_export_phone_writes_phone_target(tmp_path):
+    result = _export(tmp_path, _runner(), preset=pdfexport.PHONE)
+    assert result.ok, result.error
+    assert result.path == tmp_path / "notes.phone.pdf"
+    assert result.path.read_bytes().startswith(b"%PDF-")
 
 
 def test_export_keeps_previous_file_when_chrome_fails(tmp_path):
@@ -288,6 +321,36 @@ def test_preview_p_exports_next_to_the_source(tmp_path, monkeypatch):
     assert "标题" in calls[0][0]
 
 
+def test_preview_m_exports_phone_preset(tmp_path, monkeypatch):
+    """``m`` 用手机版 preset 导出，落点是 ``.phone.pdf``。"""
+    app = _app(tmp_path)
+    absolute = str((tmp_path / "notes.md").resolve())
+    calls: list[object] = []
+
+    def fake_export(text, source, **kwargs):
+        calls.append(kwargs.get("preset"))
+        return pdfexport.ExportResult(tmp_path / "notes.phone.pdf")
+
+    monkeypatch.setattr(pdfexport, "export_pdf", fake_export)
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(0.3)
+            app.push_screen(MarkdownPreviewScreen(absolute, relative="notes.md"))
+            await pilot.pause(0.3)
+            screen = app.screen
+            assert isinstance(screen, MarkdownPreviewScreen)
+            await pilot.press("m")
+            ok = await _wait_until(
+                pilot,
+                lambda: str(tmp_path / "notes.phone.pdf") in _footer(screen),
+            )
+            assert ok, _footer(screen)
+
+    asyncio.run(scenario())
+    assert calls == [pdfexport.PHONE]
+
+
 def test_preview_p_reports_failure(tmp_path, monkeypatch):
     app = _app(tmp_path)
     absolute = str((tmp_path / "notes.md").resolve())
@@ -340,6 +403,8 @@ def test_preview_p_refuses_empty_document(tmp_path, monkeypatch):
     assert called == []
 
 
-def test_footer_mentions_the_export_key():
-    """``p`` 必须出现在 footer 里：不加提示的键等于没有。"""
-    assert "p " in t("md.footer")
+def test_footer_mentions_the_export_keys():
+    """``p`` / ``m`` 都必须出现在 footer 里：不加提示的键等于没有。"""
+    footer = t("md.footer")
+    assert "p " in footer
+    assert "m " in footer

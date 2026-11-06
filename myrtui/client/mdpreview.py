@@ -412,6 +412,7 @@ class MarkdownPreviewScreen(QuietWhenCovered, ModalScreen[None], inherit_binding
         Binding("r", "reload", show=False),
         Binding("v", "paged", show=False),
         Binding("p", "export_pdf", show=False),
+        Binding("m", "export_phone", show=False),
     ]
 
     CSS = """
@@ -785,26 +786,40 @@ class MarkdownPreviewScreen(QuietWhenCovered, ModalScreen[None], inherit_binding
         )
 
     def action_export_pdf(self) -> None:
-        """``p``：整篇 → A4 PDF，落在**源文件同目录**（白底黑字、无页码）。
+        """``p``：整篇 → A4 打印版 PDF，落在**源文件同目录**（白底黑字、无页码）。
 
         Chrome 冷启动 1–2 s，文档长一点更久，所以打印必须进 worker——在事件
         循环上做等于把整个预览层冻住。成功与失败都只走 footer：导出是「拿走一份
         文件」，不需要第二个界面。旧文件由 ``export_pdf`` 用 ``os.replace`` 保护。
         """
+        self._start_export(pdfexport.A4, "md.export_running")
+
+    def action_export_phone(self) -> None:
+        """``m``：整篇 → 手机阅读版 PDF（A4 · 12 pt · 6 mm，落 ``.phone.pdf``）。
+
+        为什么仍是 A4：手机浏览器/阅读器横屏后有效宽度反而比窄页大，公式和表格
+        更容易放得下；放大字号、压小边距即可，不必为「手机」另造一种纸张。
+        """
+        self._start_export(pdfexport.PHONE, "md.export_running_phone")
+
+    def _start_export(
+        self, preset: pdfexport.PrintPreset, running_key: str
+    ) -> None:
+        """``p`` / ``m`` 共用的导出入口：只有版式和提示文案不同。"""
         if not self._text.strip():
             self._notice(t("md.not_ready"))
             return
-        self._set_footer(t("md.export_running"))
+        self._set_footer(t(running_key))
         self.run_worker(
-            self._export_pdf(),
+            self._export_pdf(preset),
             group="mdpreview-export",
             exclusive=True,
             exit_on_error=False,
         )
 
-    async def _export_pdf(self) -> None:
+    async def _export_pdf(self, preset: pdfexport.PrintPreset) -> None:
         result = await asyncio.to_thread(
-            pdfexport.export_pdf, self._text, self._absolute
+            pdfexport.export_pdf, self._text, self._absolute, preset=preset
         )
         if not self._alive():
             return

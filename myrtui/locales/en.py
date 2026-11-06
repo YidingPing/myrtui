@@ -131,7 +131,7 @@ MESSAGES: dict[str, str] = {
     "img.widget_failed": "Failed to build the image widget",
     "img.loading": "Loading...",
     # ---- markdown preview (mdpreview.py) -----------------------------------
-    "md.footer": "Esc back · r reload · v LaTeX typeset · p export A4 PDF · up/down, PgUp/PgDn scroll",
+    "md.footer": "Esc back · r reload · v LaTeX typeset · p A4 PDF · m phone PDF · up/down, PgUp/PgDn scroll",
     "md.changed": "File changed on disk · r reloads",
     "md.no_links": "The preview does not open links",
     "md.rendering": "Rendering...",
@@ -141,6 +141,7 @@ MESSAGES: dict[str, str] = {
     "md.render_failed": "Markdown rendering failed (press r to retry)",
     "md.not_ready": "The document is not rendered yet",
     "md.export_running": "Exporting A4 PDF...",
+    "md.export_running_phone": "Exporting phone PDF...",
     "md.export_ok": "Exported {path}",
     "md.export_failed": "PDF export failed: {exc}",
     "md.export_timeout": "PDF export timed out after {seconds}s",
