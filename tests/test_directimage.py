@@ -93,18 +93,25 @@ def test_paint_resizes_to_region_when_cells_unknown(monkeypatch):
     assert "c=10" in written[0] and "r=3" in written[0]
 
 
-def test_set_image_reuses_the_same_id(monkeypatch):
+def test_set_image_uses_a_new_id_and_deletes_the_old_one(monkeypatch):
+    """换页必须换 id：实测有终端对「同 id 重传」不重绘，画面会停在第一页。"""
     written: list[str] = []
     monkeypatch.setattr(directimage, "_write", written.append)
 
     widget = _Placed(b"page-1", cols=8, rows=2)
     widget.paint()
+    first_id = widget.image_id
     first = widget._sequence
+
     widget.set_image(b"page-2")
+    assert widget.image_id != first_id
     widget.paint()
+
+    text = written[-1]
     assert widget._sequence != first
-    assert "cGFnZS0y" in widget._sequence       # "page-2"
-    assert "i=%d" % widget.image_id in widget._sequence
+    assert "cGFnZS0y" in text                      # "page-2"
+    assert f"i={widget.image_id}" in text
+    assert f"a=d,d=I,i={first_id}" in text         # 旧页明确删掉
 
 
 def test_png_bytes_accepts_path_bytes_and_pil(tmp_path):

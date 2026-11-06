@@ -110,6 +110,7 @@ class DirectImage(Widget):
         super().__init__(**kwargs)
         self._payload = png_bytes(image)
         self.image_id = image_id if image_id is not None else next_image_id()
+        self._previous_id: int | None = None
         self._cells: tuple[int, int] | None = (cols, rows) if cols and rows else None
         self._cols = 0
         self._rows = 0
@@ -157,6 +158,11 @@ class DirectImage(Widget):
         sequence = self._build(cols, rows)
         row, column = region.y + 1, region.x + 1
         body = f"\x1b7\x1b[{row};{column}H{sequence}\x1b8"
+        if self._previous_id is not None:
+            # 换页用**新 id**再删旧 id：实测有终端对「同 id 重传」不重绘，
+            # 只换数据会导致画面停在第一页。
+            body += delete_sequence(self._previous_id)
+            self._previous_id = None
         _write(tmux_wrap(body))
 
     def _paint_soon(self) -> None:
@@ -180,10 +186,17 @@ class DirectImage(Widget):
 
     def on_unmount(self) -> None:
         """占用的图 id 必须还回去，否则终端里会一直攒着旧页。"""
-        _write(tmux_wrap(delete_sequence(self.image_id)))
+        ids = [self.image_id]
+        if self._previous_id is not None:
+            ids.append(self._previous_id)
+            self._previous_id = None
+        _write(tmux_wrap("".join(delete_sequence(i) for i in ids)))
 
     def set_image(self, image) -> None:
-        """换一张图：同一个 id 会被终端覆盖，旧页不会留残影。"""
+        """换一张图：**换新 id**（有终端对同 id 重传不重绘），旧 id 由下次
+        ``paint`` 删掉。"""
+        self._previous_id = self.image_id
+        self.image_id = next_image_id()
         self._payload = png_bytes(image)
         self._cols = self._rows = 0
         self._sequence = ""
