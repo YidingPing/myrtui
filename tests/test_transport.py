@@ -322,6 +322,34 @@ def _wait_until(predicate, timeout: float = 10.0, interval: float = 0.05):
     return False
 
 
+def _converged(
+    control_backend,
+    exec_backend,
+    pane_id: str,
+    height: int,
+    timeout: float = 5.0,
+) -> None:
+    """等 control / exec 看到同一屏再比较。
+
+    shell 的提示符在命令结束后**异步**出现：先 poll 的一侧可能还没有它，后 poll
+    的一侧已经有了（WSL runner 上实测，连续三轮 CI 都挂在这一行）。连续多次
+    相同才算稳定，避免把「提示符到达前」的瞬间当成收敛。
+    """
+    deadline = time.monotonic() + timeout
+    stable = 0
+    while time.monotonic() < deadline:
+        ctl = control_backend.poll({pane_id: (0, height)})[1][pane_id].text
+        exe = exec_backend.poll({pane_id: (0, height)})[1][pane_id].text
+        if ctl == exe:
+            stable += 1
+            if stable >= 3:
+                return
+        else:
+            stable = 0
+        time.sleep(0.05)
+    raise AssertionError("control/exec captures did not converge")
+
+
 def _type_until(backend, pane_id: str, command: str, marker: str, timeout: float = 15.0):
     """重发命令行直到 capture 里出现 ``marker``。
 
@@ -451,6 +479,7 @@ def test_poll_scrollback_matches_exec(control_backend):
     _type_until(control_backend, pid, command, "line-60")
     pane = control_backend.list_panes()[0]
     exec_backend = TmuxBackend(control_backend.socket, control_backend.session)
+    _converged(control_backend, exec_backend, pid, pane.height)
     for raw_k in (0, 5, 20):
         k = min(raw_k, pane.history_size - 1)
         ctl = control_backend.poll({pid: (k, pane.height)})[1][pid]
