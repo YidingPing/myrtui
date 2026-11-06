@@ -34,6 +34,9 @@ log = logging.getLogger("myrtui.directimage")
 _TMUX_PREFIX = "\x1bPtmux;"
 _TMUX_SUFFIX = "\x1b\\"
 
+REASSERT_DELAY = 0.25
+"""贴图之后再补一次 ``a=p`` 放置的延迟：给可能跟上来的重画留一帧时间。"""
+
 _ids = count(random.randint(1, 1 << 31))
 
 
@@ -71,6 +74,18 @@ def display_sequence(payload: bytes | str, *, cols: int, rows: int, image_id: in
 
 def delete_sequence(image_id: int) -> str:
     return f"\x1b_Ga=d,d=I,i={image_id},q=2\x1b\\"
+
+
+def place_sequence(image_id: int, *, cols: int, rows: int) -> str:
+    """``a=p``：把**已经传过**的图重新放置一次（几十字节，不重传数据）。
+
+    用来兜「贴完又被下一帧擦掉」的偶发情况：重新放置一次就够了。
+    """
+    return (
+        f"\x1b_Ga=p,i={image_id},c={max(1, int(cols))},r={max(1, int(rows))},"
+        f"C=1,q=2\x1b\\"
+    )
+
 
 
 def _write(text: str) -> None:
@@ -115,6 +130,7 @@ class DirectImage(Widget):
         self._cols = 0
         self._rows = 0
         self._sequence = ""
+        self._reassert_timer = None
     # ---------- 布局 / 渲染 ----------
 
     def set_cells(self, cols: int, rows: int) -> None:
@@ -167,6 +183,29 @@ class DirectImage(Widget):
             self._retired.clear()
         body += f"\x1b7\x1b[{row};{column}H{sequence}\x1b8"
         _write(tmux_wrap(body))
+        self._reassert_soon()
+
+    def assert_visible(self) -> None:
+        """重新放置一次（``a=p``）：偶发「贴完被下一帧擦掉」靠它兜底。"""
+        region = self.region
+        if region.width <= 0 or region.height <= 0:
+            return
+        cols, rows = self._box()
+        body = (
+            f"\x1b7\x1b[{region.y + 1};{region.x + 1}H"
+            f"{place_sequence(self.image_id, cols=cols, rows=rows)}\x1b8"
+        )
+        _write(tmux_wrap(body))
+
+    def _reassert_soon(self) -> None:
+        try:
+            if not self.is_mounted:
+                return
+            if self._reassert_timer is not None:
+                self._reassert_timer.stop()
+            self._reassert_timer = self.set_timer(REASSERT_DELAY, self.assert_visible)
+        except Exception:  # noqa: BLE001 —— 未挂载 / 退出竞态
+            log.debug("直贴兜底排程失败", exc_info=True)
 
     def _paint_soon(self) -> None:
         try:
@@ -189,6 +228,9 @@ class DirectImage(Widget):
 
     def on_unmount(self) -> None:
         """一次性还掉所有用过的图 id（翻页不删，卸载时清账）。"""
+        if self._reassert_timer is not None:
+            self._reassert_timer.stop()
+            self._reassert_timer = None
         ids = [self.image_id, *self._retired]
         self._retired.clear()
         _write(tmux_wrap("".join(delete_sequence(i) for i in ids)))

@@ -122,6 +122,22 @@ def test_set_image_deletes_the_old_page_before_transmitting(monkeypatch):
     assert f"a=d,d=I,i={widget.image_id}" in written[-1]
 
 
+def test_assert_visible_replaces_without_retransmitting(monkeypatch):
+    """兜底只用 `a=p`（几十字节）：重传整页在手机上太贵。"""
+    written: list[str] = []
+    monkeypatch.setattr(directimage, "_write", written.append)
+
+    widget = _Placed(b"png", cols=10, rows=3)
+    widget.paint()
+    written.clear()
+    widget.assert_visible()
+
+    text = written[0]
+    assert "a=p" in text and "a=T" not in text
+    assert f"i={widget.image_id}" in text
+    assert text.startswith("\x1b7\x1b[1;3H") and text.endswith("\x1b8")
+
+
 def test_set_image_does_not_repaint_the_widget(monkeypatch):
     """换图不能把控件标脏：重画空格会把已贴的图擦掉（真机：翻页后空白）。"""
     written: list[str] = []
