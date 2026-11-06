@@ -119,27 +119,35 @@ def _human_size(size: int) -> str:
 
 
 def _image_widget_class(capabilities: graphics_mod.Capabilities):
-    """按能力挑控件类；``textual-image`` 缺失 / 导入失败 → ``None``。
+    """Markdown 正文里**滚动**的图片用的控件类；``None`` → 回落 ``alt``。
+
+    只认 Unicode 占位符（TGP）：Sixel 没有「复用已编码图像」的动作（Kitty 的
+    ``a=p`` 或占位符都没有），滚动后无法把图挪到新位置；塞进 render 的 DCS 还会
+    被 Textual 8 按 cell 宽裁掉 ``ST``。所以正文里的 sixel 继续显示 ``alt``，
+    整页视图 / 图片预览走 :func:`_static_widget_class` → ``SixelPaint``。
 
     只在这里 import ``textual_image``：CI 不装该依赖，模块级 import 会让
     整个预览层不可用。
     """
-    if not capabilities.bitmaps:
+    if not capabilities.tgp:
         return None
     try:
-        from textual_image.widget import SixelImage, TGPImage  # noqa: PLC0415
+        from textual_image.widget import TGPImage  # noqa: PLC0415
     except Exception:  # noqa: BLE001 —— 依赖被卸载 / 私有 API 漂移
         log.debug("textual-image 不可用，图片回落 alt", exc_info=True)
         return None
-    return SixelImage if capabilities.sixel else TGPImage
+    return TGPImage
 
 
 def _static_widget_class(capabilities: graphics_mod.Capabilities):
-    """一屏一张**静态图**用的控件类：位图优先，其次 kitty 直接贴图。
+    """一屏一张**静态图**用的控件类：六行走直写，其余照旧。
 
-    直接贴图（``a=T``）的图不跟单元格滚动，所以只给 ``v`` 整页视图和图片预览
-    用；Markdown 正文里滚动的图片/公式仍走 :func:`_image_widget_class`。
+    直写 / 直贴出来的图不跟单元格滚动，所以只给 ``v`` 整页视图和图片预览用；
+    Markdown 正文里滚动的图片/公式仍走 :func:`_image_widget_class`。
     """
+    if capabilities.sixel:
+        from myrtui.client.directimage import SixelPaint  # noqa: PLC0415 —— 避免循环
+        return SixelPaint
     widget_cls = _image_widget_class(capabilities)
     if widget_cls is not None:
         return widget_cls
@@ -196,12 +204,15 @@ def _make_image_widget(
     background: str,
     width_cells: int | None = None,
     height_cells: int | None = None,
+    cell: tuple[int, int] | None = None,
     max_rows: int = imageprep.MAX_ROWS,
 ) -> Widget:
     """构造位图控件：按像素尺寸换算成明确的 cell 宽高（不放大）。
 
     背景色必须与「预合成用的背景色」一致：Tabby 的 Sixel P2=1 语义是
     「不画、露出控件背景」，不一致就会出现异色方块（计划 §3.4 F4）。
+    ``cell`` 是终端的 cell 像素尺寸：Sixel 的 DCS 光栅按像素画，必须知道
+    一格是几像素才能正好铺满预留的格子。
     """
     widget = widget_cls(image)
     if width_cells and height_cells:
@@ -217,6 +228,11 @@ def _make_image_widget(
         widget.styles.height = "auto"
         widget.styles.max_height = max_rows
     widget.styles.background = background
+    if cell is not None:
+        set_cell = getattr(widget, "set_cell", None)
+        if set_cell is not None:
+            # 直写 sixel 的画布像素：cell_w × cell_h 必须与真实终端一致。
+            set_cell(int(cell[0]), int(cell[1]))
     return widget
 
 

@@ -913,6 +913,7 @@ def test_paged_view_writes_nothing_while_idle(tmp_path, monkeypatch):
     from textual.drivers.headless_driver import HeadlessDriver
 
     import myrtui.client.docpage as docpage
+    from myrtui.client import directimage
     from myrtui.client import graphics as graphics_mod
     from myrtui.client.pageview import PagedDocScreen
 
@@ -922,6 +923,11 @@ def test_paged_view_writes_nothing_while_idle(tmp_path, monkeypatch):
     written: list[str] = []
     monkeypatch.setattr(
         HeadlessDriver, "write", lambda self, data: written.append(data)
+    )
+    # 0.11.2：sixel 走「帧后直写」，不经过 Textual 的 driver，单独收一份。
+    direct_written: list[str] = []
+    monkeypatch.setattr(
+        directimage, "_write", lambda data: direct_written.append(data)
     )
 
     page = tmp_path / "page.png"
@@ -971,15 +977,19 @@ def test_paged_view_writes_nothing_while_idle(tmp_path, monkeypatch):
                     relative="notes.md",
                 )
             )
-            await pilot.pause(2.0)  # 首帧（含编码）都留在预热里
+            # 首帧（含 worker 里的编码）先落地，别让它落进「静止」窗口。
+            assert await _wait_until(pilot, lambda: bool(direct_written), timeout=10)
 
             written.clear()
+            direct_written.clear()
             await pilot.pause(2.0)
             assert written == [], "静止的位图屏不该再往终端写任何东西"
+            assert direct_written == []
 
-            written.clear()
             await pilot.press("pagedown")
-            await pilot.pause(1.0)
-            assert written and any("\x1bP" in chunk for chunk in written)
+            assert await _wait_until(
+                pilot, lambda: bool(direct_written), timeout=10
+            ), "翻页后没有重发整图"
+            assert any("\x1bP" in chunk for chunk in direct_written)
 
     asyncio.run(scenario())

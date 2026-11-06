@@ -376,3 +376,26 @@ def test_image_screen_mounts_bitmap(tmp_path, monkeypatch):
             assert children and isinstance(children[0], Dummy)
 
     asyncio.run(scenario())
+
+
+def test_image_screen_uses_sixel_paint(tmp_path, monkeypatch):
+    """sixel 终端用 SixelPaint（帧后直写），并带上探测到的 cell 像素尺寸。"""
+    path = _make_png(tmp_path / "pic.png")
+    from myrtui.client.directimage import SixelPaint
+
+    monkeypatch.setattr(SixelPaint, "_encode_image", lambda self, *a: None)
+    caps = graphics.Capabilities(
+        sixel=True, cell_width=10, cell_height=20, available=True, mode="sixel"
+    )
+
+    async def scenario():
+        app = _screen_app(path, caps=caps)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause(0.5)
+            children = list(
+                app.screen.query_one("#imagepreview-scroll").children
+            )
+            assert children and isinstance(children[0], SixelPaint)
+            assert children[0]._cell == (10, 20)
+
+    asyncio.run(scenario())

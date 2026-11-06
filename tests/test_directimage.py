@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 
 import pytest
@@ -162,3 +163,150 @@ def test_png_bytes_accepts_path_bytes_and_pil(tmp_path):
 
     png = directimage.png_bytes(Image.new("RGB", (2, 2), (1, 2, 3)))
     assert png.startswith(b"\x89PNG")
+
+
+# ---------- sixel：帧后直写（0.11.2） ----------
+
+_DCS = '\x1bP0;0;0q"1;1;100;60#0;2;0;0;0#0~~~~~~\x1b\\'
+"""一段结构完整的假 DCS（头 + 光栅属性 + 数据 + ST）。"""
+
+
+class _PlacedSixel(directimage.SixelPaint):
+    """绕过 layout：region 固定，测试直接看写出去的字节。"""
+
+    region = Region(2, 0, 10, 3)
+
+
+@pytest.fixture(autouse=True)
+def _clean_sixel_cache():
+    directimage.clear_sixel_cache()
+    yield
+    directimage.clear_sixel_cache()
+
+
+def test_sixel_render_only_reserves_cells():
+    """render 里不能夹带转义：Textual 会按 cell 宽裁剪整段 DCS（白屏的真因）。"""
+    widget = _PlacedSixel(b"png")
+    text = widget.render()
+    assert "\x1b" not in text
+    lines = text.splitlines()
+    assert len(lines) == 3 and set(lines[0]) == {" "}
+
+
+def test_sixel_paint_writes_the_whole_dcs_between_cursor_saves(monkeypatch):
+    written: list[str] = []
+    monkeypatch.setattr(directimage, "_write", written.append)
+
+    widget = _PlacedSixel(b"png", cols=10, rows=3)
+    directimage.store_sixel(widget._key(10, 3), _DCS)
+    widget.paint()
+
+    assert len(written) == 1
+    text = written[0]
+    assert text.startswith("\x1b7\x1b[1;3H")  # 存光标 + 定位到 region 左上角
+    assert text.endswith("\x1b8")             # 还原光标
+    body = text[len("\x1b7\x1b[1;3H") : -len("\x1b8")]
+    assert body == _DCS                       # DCS 完整，没有被裁剪
+    assert body.startswith("\x1bP") and body.endswith("\x1b\\")
+
+
+def test_sixel_cache_hit_does_not_encode_again(monkeypatch):
+    written: list[str] = []
+    monkeypatch.setattr(directimage, "_write", written.append)
+
+    widget = _PlacedSixel(b"png", cols=10, rows=3)
+    directimage.store_sixel(widget._key(10, 3), _DCS)
+    encodes: list[tuple] = []
+    monkeypatch.setattr(widget, "_encode", lambda *args: encodes.append(args))
+
+    widget.paint()
+    widget.paint()
+
+    assert encodes == []          # 翻回同一页 / 同一尺寸：0 编码
+    assert len(written) == 2
+
+
+def test_sixel_paint_schedules_a_single_encode_for_a_miss(monkeypatch):
+    widget = _PlacedSixel(b"png", cols=10, rows=3)
+    calls: list[tuple] = []
+    monkeypatch.setattr(widget, "_encode", lambda *args: calls.append(args))
+
+    widget.paint()
+    widget.paint()                # 编码未完成：不该重复排队
+
+    assert len(calls) == 1
+    assert directimage._SIXEL_INFLIGHT    # 在途去重
+
+
+def test_sixel_failed_encode_is_negative_cached(monkeypatch):
+    """编码失败只记一次 ``None``：之后保持空格，不每帧重试。"""
+    written: list[str] = []
+    monkeypatch.setattr(directimage, "_write", written.append)
+
+    widget = _PlacedSixel(b"png", cols=10, rows=3)
+    directimage.store_sixel(widget._key(10, 3), None)
+    encodes: list[tuple] = []
+    monkeypatch.setattr(widget, "_encode", lambda *args: encodes.append(args))
+
+    widget.paint()
+
+    assert encodes == [] and written == []
+
+
+def test_sixel_encoding_runs_off_the_event_loop(monkeypatch):
+    """编码必须在 worker 线程（整屏 ≈380 ms，事件循环上会卡住整个 UI）。"""
+    import threading
+    import time
+
+    from textual.app import App
+
+    written: list[str] = []
+    monkeypatch.setattr(directimage, "_write", written.append)
+    threads: list[threading.Thread] = []
+
+    def fake_encode(self, cols, rows, cell, background):
+        threads.append(threading.current_thread())
+        return _DCS
+
+    monkeypatch.setattr(directimage.SixelPaint, "_encode_image", fake_encode)
+
+    class Demo(App):
+        def compose(self):
+            yield directimage.SixelPaint(b"png", cols=10, rows=3)
+
+    async def scenario():
+        app = Demo()
+        async with app.run_test(size=(40, 12)) as pilot:
+            deadline = time.monotonic() + 5
+            while not written and time.monotonic() < deadline:
+                await pilot.pause(0.02)
+            assert written, "编码完成后没有补画"
+            assert threads and threads[0] is not threading.main_thread()
+
+    asyncio.run(scenario())
+
+
+def test_background_rgba_accepts_short_and_long_hex():
+    assert directimage.background_rgba("#102030") == (16, 32, 48, 1.0)
+    assert directimage.background_rgba("#fff") == (255, 255, 255, 1.0)
+    assert directimage.background_rgba("nonsense") == (0, 0, 0, 1.0)
+
+
+def test_static_widget_class_chooses_sixel_paint_and_keeps_body_alt():
+    """整页视图 / 图片预览 → SixelPaint；正文里滚动的图片仍回落 alt。"""
+    from myrtui.client import graphics, mdpreview
+
+    caps = graphics.Capabilities(sixel=True, available=True, mode="sixel")
+    assert mdpreview._static_widget_class(caps) is directimage.SixelPaint
+    assert mdpreview._image_widget_class(caps) is None
+
+
+def test_static_widget_class_keeps_tgp_for_scrolling_body():
+    pytest.importorskip("textual_image")
+    from textual_image.widget import TGPImage
+
+    from myrtui.client import graphics, mdpreview
+
+    caps = graphics.Capabilities(tgp=True, available=True, mode="tgp")
+    assert mdpreview._static_widget_class(caps) is TGPImage
+    assert mdpreview._image_widget_class(caps) is TGPImage

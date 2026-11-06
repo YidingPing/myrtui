@@ -491,7 +491,7 @@ def test_paged_screen_mounts_pages_with_exact_cell_size(monkeypatch, tmp_path):
     )
 
     async def scenario():
-        app = _paged_app([page])
+        app = _paged_app([page], caps=_caps(sixel=False, tgp=True, mode="tgp"))
         async with app.run_test(size=(110, 45)) as pilot:
             await pilot.pause(0.4)
             screen = app.screen
@@ -530,8 +530,31 @@ def test_paged_screen_uses_direct_display_without_placeholders(monkeypatch, tmp_
     asyncio.run(scenario())
 
 
+def test_paged_screen_uses_sixel_paint_when_sixel_is_available(monkeypatch, tmp_path):
+    """sixel 也走「render 只铺空格 + 帧后直写」，不再用 SixelImage 的 segment。"""
+    from myrtui.client.directimage import SixelPaint
+
+    spec = _spec(cols=110, rows=44)
+    page = _fake_png(tmp_path / "p1.png", size=spec.size)
+    monkeypatch.setattr(docpage, "cached_pages", lambda *a, **kw: [page])
+    monkeypatch.setattr(SixelPaint, "_encode_image", lambda self, *a: None)
+
+    async def scenario():
+        app = _paged_app([page], caps=_caps())
+        async with app.run_test(size=(110, 45)) as pilot:
+            await pilot.pause(0.4)
+            children = list(app.screen.query_one("#paged-scroll").children)
+            assert len(children) == 1
+            assert isinstance(children[0], SixelPaint)
+            # 画布像素必须知道真实 cell 尺寸（探测值 10×20）
+            assert children[0]._cell == (10, 20)
+            assert int(children[0].styles.width.value) == 110
+
+    asyncio.run(scenario())
+
+
 def test_paged_screen_prefers_placeholder_renderer_when_available(monkeypatch, tmp_path):
-    """能画占位符时不要退化成直贴（直贴的图不跟滚动）。"""
+    """能画占位符（TGP）时不要退化成直贴（直贴的图不跟滚动）。"""
     from myrtui.client.directimage import DirectImage
 
     pytest.importorskip("textual_image")
@@ -540,7 +563,10 @@ def test_paged_screen_prefers_placeholder_renderer_when_available(monkeypatch, t
     monkeypatch.setattr(docpage, "cached_pages", lambda *a, **kw: [page])
 
     async def scenario():
-        app = _paged_app([page], caps=_caps(direct=True))
+        app = _paged_app(
+            [page],
+            caps=_caps(sixel=False, tgp=True, direct=True, mode="tgp"),
+        )
         async with app.run_test(size=(110, 45)) as pilot:
             await pilot.pause(0.4)
             children = list(app.screen.query_one("#paged-scroll").children)
@@ -651,7 +677,7 @@ def test_paged_screen_moves_by_whole_pages_only(monkeypatch, tmp_path):
     monkeypatch.setattr(docpage, "cached_pages", lambda *a, **kw: pages)
 
     async def scenario():
-        app = _paged_app(pages)
+        app = _paged_app(pages, caps=_caps(sixel=False, tgp=True, mode="tgp"))
         async with app.run_test(size=(110, 40)) as pilot:
             await pilot.pause(0.4)
             screen = app.screen
@@ -685,7 +711,7 @@ def test_paged_screen_never_animates_scroll(monkeypatch, tmp_path):
     monkeypatch.setattr(docpage, "cached_pages", lambda *a, **kw: pages)
 
     async def scenario():
-        app = _paged_app(pages)
+        app = _paged_app(pages, caps=_caps(sixel=False, tgp=True, mode="tgp"))
         async with app.run_test(size=(110, 40)) as pilot:
             await pilot.pause(0.4)
             container = app.screen.query_one("#paged-scroll")

@@ -227,6 +227,13 @@ class PagedDocScreen(QuietWhenCovered, ModalScreen[None], inherit_bindings=False
         self._spec = spec
         self._load()
 
+    def _cell(self) -> tuple[int, int]:
+        """终端 cell 的像素尺寸（探测值，缺省按 VT340 口径）。"""
+        return (
+            self._graphics.cell_width or graphics_mod.DEFAULT_CELL_WIDTH,
+            self._graphics.cell_height or graphics_mod.DEFAULT_CELL_HEIGHT,
+        )
+
     def _spec_for(self) -> docpage.PageSpec | None:
         """滚动区尺寸 → 页面像素（1 页 = 1 屏，1:1 不缩放）。"""
         try:
@@ -237,10 +244,7 @@ class PagedDocScreen(QuietWhenCovered, ModalScreen[None], inherit_bindings=False
         height = int(container.size.height)
         if width <= 0 or height <= 0:
             return None
-        cell = (
-            self._graphics.cell_width or graphics_mod.DEFAULT_CELL_WIDTH,
-            self._graphics.cell_height or graphics_mod.DEFAULT_CELL_HEIGHT,
-        )
+        cell = self._cell()
         return docpage.page_spec(cell, max(20, width), max(10, height))
 
     # ---------- 加载 ----------
@@ -301,12 +305,16 @@ class PagedDocScreen(QuietWhenCovered, ModalScreen[None], inherit_bindings=False
         cols = max(1, int(container.size.width))
         rows = max(1, int(container.size.height))
         background = self._colors[1]
-        if widget_cls is directimage.DirectImage:
-            # 直贴（a=T）的图不跟单元格滚动：只挂**一个**控件，翻页时换图。
+        if issubclass(widget_cls, directimage.StaticImage):
+            # 直贴 / 直写的图不跟单元格滚动：只挂**一个**控件，翻页时换图。
             widget = widget_cls(pages[0], cols=cols, rows=rows)
             widget.styles.width = cols
             widget.styles.height = rows
             widget.styles.background = background
+            set_cell = getattr(widget, "set_cell", None)
+            if set_cell is not None:
+                # sixel 的 DCS 按像素画：必须知道一格是几像素。
+                set_cell(*self._cell())
             await container.remove_children()
             await container.mount(widget)
             self._direct = widget

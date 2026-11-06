@@ -301,6 +301,7 @@ class ImagePreviewScreen(
                 background=background,
                 width_cells=cells[0],
                 height_cells=cells[1],
+                cell=self._cell(),
             )
             await container.remove_children()
             await container.mount(widget)
