@@ -190,11 +190,13 @@ In a compact **file-tree page** the bar switches to `ESC` / `↑` / `↓` / `ENT
 `≡` (Space, opens the context menu). `ENT` keeps the keyboard semantics: a file
 row selects + opens the menu, a directory row expands / collapses; `≡` opens
 the menu on any row (this is the only touch path to directory actions such as
-"refresh this directory"). In the **Git history page** it becomes
-`ESC` / `↑` / `↓` / `ENT`: `ENT` shows the full commit card for the highlighted
-commit (subject, body, sha, author, date), replacing the desktop hover card that
-has no room on a full-width phone page. Tap `ENT` again or tap outside the card
-to close it.
+"refresh this directory"). While the context menu is open the bar becomes **the
+menu's own** — `ESC` / `↑` / `↓` / `ENT` move the highlight and select, instead
+of tapping "outside the menu" and closing it. In the **Git history page** it
+becomes `ESC` / `↑` / `↓` / `ENT`: `ENT` shows the full commit card for the
+highlighted commit (subject, body, sha, author, date), replacing the desktop
+hover card that has no room on a full-width phone page. Tap `ENT` again or tap
+outside the card to close it.
 
 If your phone terminal already has a complete extra-keys row, `MYRTUI_KEYBAR=off`
 disables the bar permanently (the `KEY` button is hidden too). With `auto` (the
@@ -375,6 +377,13 @@ direct display (`a=T`, one still image per screen) and uses it when placeholders
 are unavailable; inside tmux that path also needs
 `set -g allow-passthrough on`. Scrolling views keep the text fallbacks — a
 direct-display image does not move with the text.
+
+**Sixel is used for those two views only.** An encoded sixel cannot be re-placed
+(Kitty has `a=p`, sixel has nothing), so images in the scrolling Markdown body
+keep their `alt` text. The page view and the image preview write the whole DCS
+after the frame (`ESC7` + `CSI r;cH` + DCS + `ESC8`) instead of handing it to
+Textual's renderer, which crops escape sequences by cell width and cuts off the
+`ST` terminator.
 
 ## Splitters
 

@@ -62,6 +62,10 @@ A terminal that draws images but not Unicode placeholders still gets the `v`
 page view and the image preview through Kitty's direct display (`a=T`) — inside
 tmux that additionally needs `set -g allow-passthrough on`. Measured on a phone
 over SSH (50×43, inside tmux 3.8): the page view renders and flips page by page.
+**Sixel is limited to those two views** — it has no "re-place an encoded image"
+action, so images in a scrolling Markdown body stay `alt` text (the page view and
+the image preview paint the DCS after the frame instead of through Textual's
+renderer, which crops escape sequences by cell width).
 See [Open and preview](../docs/USAGE.md#open-and-preview).
 **Inside an outer tmux, Sixel is off**: tmux does not forward it — it
 substitutes a `SIXEL IMAGE (WxH)` placeholder made of `+` cells — and adding

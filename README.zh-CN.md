@@ -53,7 +53,9 @@ pane。一个项目一个会话，退出再进来还是原来的布局。
 预览会显示元信息与提示，不会白屏，也不影响 pane。能画图但不支持 Unicode 占位符的
 终端，`v` 整页视图和图片预览仍可通过 Kitty 的**直接贴图**（`a=T`）显示——在 tmux
 里还需要 `set -g allow-passthrough on`。已在 **手机 SSH（50×43，tmux 3.8 内）**实测：
-整页出图、逐页翻页正常。见 [docs/USAGE.zh-CN.md](docs/USAGE.zh-CN.md)。**在外层
+整页出图、逐页翻页正常。**Sixel 也只给这两个视图**——它没有「重放已编码图像」的
+动作，滚动后无法把图挪到新位置，所以正文里滚动的图片继续显示 `alt`（整页与图片
+预览的 DCS 改成帧后直写，不经过 Textual 按 cell 宽度裁剪的渲染通道）。见 [docs/USAGE.zh-CN.md](docs/USAGE.zh-CN.md)。**在外层
 tmux 里 Sixel 是关闭的**：tmux 不转发 Sixel，而是把它换成 `SIXEL IMAGE (宽x高)`
 加一整屏 `+`（tmux 3.8 实测；往 `terminal-features` 里加 `sixel` 也没用）。
 Kitty TGP 可以靠 `set -g allow-passthrough on` 穿透，但终端必须实现 Unicode
