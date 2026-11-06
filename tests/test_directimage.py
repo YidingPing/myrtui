@@ -93,8 +93,12 @@ def test_paint_resizes_to_region_when_cells_unknown(monkeypatch):
     assert "c=10" in written[0] and "r=3" in written[0]
 
 
-def test_set_image_uses_a_new_id_and_deletes_the_old_one(monkeypatch):
-    """换页必须换 id：实测有终端对「同 id 重传」不重绘，画面会停在第一页。"""
+def test_set_image_uses_a_new_id_and_keeps_the_old_one_alive(monkeypatch):
+    """换页换 id（同 id 重传有的终端不重绘），但**不在翻页时删图**。
+
+    真机踩过：把 `a=d` 当成「清空所有图」的实现会把刚贴的新页一起抹掉，
+    表现就是翻页后整屏空白。旧 id 只记账，卸载时统一还。
+    """
     written: list[str] = []
     monkeypatch.setattr(directimage, "_write", written.append)
 
@@ -111,7 +115,12 @@ def test_set_image_uses_a_new_id_and_deletes_the_old_one(monkeypatch):
     assert widget._sequence != first
     assert "cGFnZS0y" in text                      # "page-2"
     assert f"i={widget.image_id}" in text
-    assert f"a=d,d=I,i={first_id}" in text         # 旧页明确删掉
+    assert "a=d" not in text                       # 翻页不删图
+
+    widget.on_unmount()
+    cleanup = written[-1]
+    assert f"a=d,d=I,i={first_id}" in cleanup
+    assert f"a=d,d=I,i={widget.image_id}" in cleanup
 
 
 def test_png_bytes_accepts_path_bytes_and_pil(tmp_path):

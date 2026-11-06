@@ -110,7 +110,7 @@ class DirectImage(Widget):
         super().__init__(**kwargs)
         self._payload = png_bytes(image)
         self.image_id = image_id if image_id is not None else next_image_id()
-        self._previous_id: int | None = None
+        self._retired: list[int] = []
         self._cells: tuple[int, int] | None = (cols, rows) if cols and rows else None
         self._cols = 0
         self._rows = 0
@@ -157,13 +157,10 @@ class DirectImage(Widget):
         cols, rows = self._box()
         sequence = self._build(cols, rows)
         row, column = region.y + 1, region.x + 1
-        body = f"\x1b7\x1b[{row};{column}H{sequence}\x1b8"
-        if self._previous_id is not None:
-            # 换页用**新 id**再删旧 id：实测有终端对「同 id 重传」不重绘，
-            # 只换数据会导致画面停在第一页。
-            body += delete_sequence(self._previous_id)
-            self._previous_id = None
-        _write(tmux_wrap(body))
+        # 翻页时**不删旧图**：有的实现把 `a=d` 当成「清空所有图」而不看 `i=`，
+        # 删一次就会把刚贴上的新页一起抹掉（真机现象：翻页后整屏空白）。
+        # 页面不透明且贴在同一格，新页自然盖住旧页；旧 id 统一在卸载时清理。
+        _write(tmux_wrap(f"\x1b7\x1b[{row};{column}H{sequence}\x1b8"))
 
     def _paint_soon(self) -> None:
         try:
@@ -185,17 +182,17 @@ class DirectImage(Widget):
         self._paint_soon()
 
     def on_unmount(self) -> None:
-        """占用的图 id 必须还回去，否则终端里会一直攒着旧页。"""
-        ids = [self.image_id]
-        if self._previous_id is not None:
-            ids.append(self._previous_id)
-            self._previous_id = None
+        """一次性还掉所有用过的图 id（翻页不删，卸载时清账）。"""
+        ids = [self.image_id, *self._retired]
+        self._retired.clear()
         _write(tmux_wrap("".join(delete_sequence(i) for i in ids)))
 
     def set_image(self, image) -> None:
-        """换一张图：**换新 id**（有终端对同 id 重传不重绘），旧 id 由下次
-        ``paint`` 删掉。"""
-        self._previous_id = self.image_id
+        """换一张图：**换新 id**（有终端对同 id 重传不重绘，画面会停在第一页）。
+
+        旧 id 只记下来、不当场删——见 :meth:`paint` 的注释。
+        """
+        self._retired.append(self.image_id)
         self.image_id = next_image_id()
         self._payload = png_bytes(image)
         self._cols = self._rows = 0
