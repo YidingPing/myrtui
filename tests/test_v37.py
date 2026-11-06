@@ -227,6 +227,23 @@ def test_graphics_describe_and_reason_name_tmux():
     assert graphics.TMUX_PASSTHROUGH_CMD in graphics.blocked_reason(caps, env="auto")
 
 
+def test_graphics_reason_prefers_measured_note():
+    """「没有位图」的五个原因不能混成一句：探测说什么就说什么。"""
+    caps, warning = graphics.detect(
+        "auto", probe=lambda: _caps(tgp=True), tty=True, tmux=True,
+        placeholders=lambda: False, passthrough=lambda: True,
+    )
+    assert caps.note == warning == t("gfx.tgp_no_placeholders")
+    assert graphics.blocked_reason(caps, env="auto") == t("gfx.tgp_no_placeholders")
+
+    nose = graphics.Capabilities(
+        available=True, mode="unicode", note=t("gfx.tmux_passthrough_off",
+                                               env=graphics.ENV_NAME,
+                                               cmd=graphics.TMUX_PASSTHROUGH_CMD)
+    )
+    assert graphics.TMUX_PASSTHROUGH_CMD in graphics.blocked_reason(nose, env="auto")
+
+
 def test_graphics_non_tty_skips_probe_without_warning():
     called = []
 

@@ -92,6 +92,14 @@ class Capabilities:
     tmux: bool = False
     """是否跑在 tmux / screen 里（决定 Sixel 能不能用、提示怎么写）。"""
 
+    note: str | None = None
+    """这次判定的具体原因（可执行提示）；``blocked_reason`` 优先用它。
+
+    同一个「没有位图」可能来自五种完全不同的原因（tmux 挡路、终端画不了
+    占位符、passthrough 没开、依赖缺失、终端没协议）。只给一句笼统的
+    「穿不过」会让人查错方向（本版真机踩过），所以把探测时的 warning 带出来。
+    """
+
     @property
     def bitmaps(self) -> bool:
         """是否有可用的位图协议（Sixel 或 TGP）。"""
@@ -397,6 +405,7 @@ def detect(
         available=True,
         mode=resolved,
         tmux=in_tmux,
+        note=warning,
     )
     if warning:
         log.warning(warning)
@@ -439,6 +448,10 @@ def blocked_reason(capabilities: Capabilities, env: str | None = None) -> str:
         return t("gfx.mode_off", env=ENV_NAME, mode=mode)
     if not capabilities.available:
         return t("gfx.missing_dep_long", hint=INSTALL_HINT)
+    if capabilities.note:
+        # 探测阶段已经知道确切原因（tmux 挡路 / 画不了占位符 / passthrough 没开），
+        # 直接用它：这些文案都自带下一步动作。
+        return capabilities.note
     if capabilities.tmux:
         return t("gfx.tmux_blocked", env=ENV_NAME, cmd=TMUX_PASSTHROUGH_CMD)
     return t("gfx.no_protocol")
