@@ -115,7 +115,6 @@ class DirectImage(Widget):
         self._cols = 0
         self._rows = 0
         self._sequence = ""
-
     # ---------- 布局 / 渲染 ----------
 
     def set_cells(self, cols: int, rows: int) -> None:
@@ -157,10 +156,17 @@ class DirectImage(Widget):
         cols, rows = self._box()
         sequence = self._build(cols, rows)
         row, column = region.y + 1, region.x + 1
-        # 翻页时**不删旧图**：有的实现把 `a=d` 当成「清空所有图」而不看 `i=`，
-        # 删一次就会把刚贴上的新页一起抹掉（真机现象：翻页后整屏空白）。
-        # 页面不透明且贴在同一格，新页自然盖住旧页；旧 id 统一在卸载时清理。
-        _write(tmux_wrap(f"\x1b7\x1b[{row};{column}H{sequence}\x1b8"))
+        body = ""
+        if self._retired:
+            # **先清空旧图，再贴新图**。真机三次试验的结论：
+            #   · 同 id 重传 → 不重绘（画面停在第一页）；
+            #   · 贴完再删 → 整屏空白（这个实现把 `a=d` 当「清空所有图」）；
+            #   · 完全不删 → 第二张图不出现（它一次只留一张）。
+            # 所以顺序只能是：删除 → 传输。
+            body += "".join(delete_sequence(i) for i in self._retired)
+            self._retired.clear()
+        body += f"\x1b7\x1b[{row};{column}H{sequence}\x1b8"
+        _write(tmux_wrap(body))
 
     def _paint_soon(self) -> None:
         try:
