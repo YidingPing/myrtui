@@ -7,7 +7,9 @@
 - 终端 pane（AI coding）：``ESC`` / ``ENT`` / ``⇧ ⇥`` / ``/`` / ``@`` /
   ``↑`` / ``↓`` / ``C-J`` / ``DEL``；
 - 文件树整页：``ESC`` / ``↑`` / ``↓`` / ``ENT`` / ``≡``（Space，打开菜单）；
-- Git 历史整页：``ESC`` / ``↑`` / ``↓`` / ``ENT``（显示 / 收起提交详情）。
+- Git 历史整页：``ESC`` / ``↑`` / ``↓`` / ``ENT``（显示 / 收起提交详情）；
+- 上下文菜单：``ESC`` / ``↑`` / ``↓`` / ``ENT``（菜单是模态屏，主屏那条
+  被盖住，必须自己有一条才点得到）。
 
 每个键固定 3 cell 宽 × 3 行高，标签最多 3 个字符；键之间留 1 cell 空隙，
 避免 ``ESCENT`` 粘在一起。单字符标签在 3×3 里水平 / 垂直居中，3 字符标签
@@ -21,6 +23,7 @@
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from textual import events
@@ -31,6 +34,8 @@ from textual.widgets import Static
 
 from myrtui.client.flash import flash_press
 from myrtui.i18n import t
+
+log = logging.getLogger("myrtui.keybar")
 
 #: 每个键的内容宽（cell）；``KeyChip`` 的 CSS 宽度同此值。
 CHIP_WIDTH = 3
@@ -92,11 +97,14 @@ PAGE_DOWN = KeyChipSpec("page_down", "keybar.down", 80, page_action="cursor_down
 PAGE_ENTER = KeyChipSpec("page_enter", "keybar.enter", 98, page_action="activate")
 PAGE_ESC = KeyChipSpec("page_esc", "keybar.esc", 100, page_action="back")
 
-#: 三种页面上下文的按钮顺序（也是显示顺序）。
+#: 四种页面上下文的按钮顺序（也是显示顺序）。
 CONTEXTS: dict[str, tuple[KeyChipSpec, ...]] = {
     "pane": (ESC, ENTER, SHIFT_TAB, SLASH, AT, UP, DOWN, NEWLINE, BACKSPACE),
     "tree": (PAGE_ESC, PAGE_UP, PAGE_DOWN, PAGE_ENTER, MENU),
     "git": (PAGE_ESC, PAGE_UP, PAGE_DOWN, PAGE_ENTER),
+    # 上下文菜单自己的一条（0.11.2）：菜单是 ModalScreen，主屏底栏被盖住，
+    # 点原来的位置会命中「点菜单外 → 关闭」。这条底栏由菜单屏自己处理。
+    "menu": (PAGE_ESC, PAGE_UP, PAGE_DOWN, PAGE_ENTER),
 }
 
 #: 去重后的全部 chip（KeyBar 一次挂载，按上下文显隐）。
@@ -178,8 +186,8 @@ class KeyChip(Static):
             self.character = character
             self.page_action = page_action
 
-    def __init__(self, spec: KeyChipSpec, label: str):
-        super().__init__(label, id=f"key-chip-{spec.id}", classes="key-chip")
+    def __init__(self, spec: KeyChipSpec, label: str, prefix: str = "key-chip"):
+        super().__init__(label, id=f"{prefix}-{spec.id}", classes="key-chip")
         self.spec = spec
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
@@ -196,21 +204,44 @@ class KeyChip(Static):
 
 
 class KeyBar(Horizontal):
-    """窄屏底栏容器：按上下文与宽度拟合按钮，隐藏时整体不占行。"""
+    """窄屏底栏容器：按上下文与宽度拟合按钮，隐藏时整体不占行。
 
-    def __init__(self, **kwargs):
+    ``prefix`` 用来区分同屏存在的多条底栏（0.11.2：上下文菜单自己一条，
+    主屏一条）：chip 的 id 变成 ``<prefix>-<spec.id>``。菜单那条用
+    ``menu-chip-*``，App 级 ``query(KeyChip)`` 数主屏键时不会被它干扰。
+    """
+
+    def __init__(
+        self,
+        *,
+        prefix: str = "key-chip",
+        context: str = "pane",
+        **kwargs,
+    ):
         super().__init__(**kwargs)
-        self._key_context = "pane"
+        self._chip_prefix = prefix
+        self._key_context = context if context in CONTEXTS else "pane"
         self._visible: tuple[str, ...] = ()
-        # 初始隐藏：App.on_mount 的 _apply_compact 会按尺寸/模式决定是否显示。
+        # 初始隐藏：App.on_mount 的 _apply_compact 会按尺寸/模式决定是否显示；
+        # 菜单底栏在 on_mount 里自己 set_visible(True)。
         self.display = False
+
+    def _chip_id(self, spec: KeyChipSpec) -> str:
+        return f"#{self._chip_prefix}-{spec.id}"
 
     def compose(self) -> ComposeResult:
         for spec in ALL_CHIPS:
-            yield KeyChip(spec, t(spec.label_key))
+            yield KeyChip(spec, t(spec.label_key), self._chip_prefix)
+
+    def on_mount(self) -> None:
+        """按初始上下文排一次 DOM（``ALL_CHIPS`` 的顺序只对常用上下文成立）。"""
+        try:
+            self._reorder(self._key_context)
+        except Exception:  # noqa: BLE001 —— teardown 竞态
+            log.debug("底栏按键排序失败", exc_info=True)
 
     def set_context(self, context: str) -> None:
-        """切换 page / tree / git 的按钮集合（幂等）。"""
+        """切换 pane / tree / git / menu 的按钮集合（幂等）。"""
         if context not in CONTEXTS:
             context = "pane"
         if context == self._key_context:
@@ -224,7 +255,7 @@ class KeyBar(Horizontal):
     def _reorder(self, context: str) -> None:
         """按上下文顺序重排 DOM；否则文件树页会显示成 ESC / ENT / ↑ / ↓。"""
         for index, spec in enumerate(CONTEXTS[context]):
-            chip = self.query_one(f"#key-chip-{spec.id}", KeyChip)
+            chip = self.query_one(self._chip_id(spec), KeyChip)
             self.move_child(chip, before=index)
 
     def set_visible(self, visible: bool) -> None:
@@ -247,7 +278,7 @@ class KeyBar(Horizontal):
         self._visible = visible
         last = visible[-1] if visible else None
         for spec in ALL_CHIPS:
-            chip = self.query_one(f"#key-chip-{spec.id}", KeyChip)
+            chip = self.query_one(self._chip_id(spec), KeyChip)
             chip.display = spec.id in visible
             # 最后一个可见键不留右侧空隙：左对齐时它只在精确宽度下才有意义，
             # 留着会让 35 列的 9 键行在 35 列屏上多占 1 格而被裁掉。

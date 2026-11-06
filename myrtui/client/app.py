@@ -3511,7 +3511,12 @@ class TerminalApp(App, inherit_bindings=False):
 
         目标按 ``_compact_page`` 取，不依赖 ``self.focused``：点过顶栏后焦点
         可能被挪走，但页面里的底栏仍应能操作页面对应的控件。
+
+        顶层不是 ``MainScreen`` 时直接返回（0.11.2）：预览 / 菜单等模态盖住
+        主屏时，操作必须落在模态上，任何路径都不该偷偷动被盖住的树。
         """
+        if not isinstance(self.screen, MainScreen):
+            return
         if action in ("cursor_up", "cursor_down"):
             try:
                 target = (

@@ -929,6 +929,100 @@ def test_tree_page_bar_navigates_and_opens_menu(app_root):
     asyncio.run(scenario())
 
 
+def test_menu_keybar_drives_the_context_menu(app_root):
+    """0.11.2：菜单自己的底栏 —— ↑/↓/ENT 操作菜单，ESC 关闭，菜单不消失。"""
+    from textual.widgets import OptionList
+
+    async def scenario():
+        app = _app(FakeBackend(1), app_root)
+        async with app.run_test(size=(46, 22)) as pilot:
+            await pilot.pause(0.4)
+            await pilot.press("ctrl+a")
+            await pilot.press("b")
+            await pilot.pause(0.4)
+            assert app._compact_page == "tree"
+
+            tree = app.query_one("#file-tree")
+            tree.cursor_line = _tree_lines(tree).index("notes.txt")
+            await pilot.pause(0.1)
+            await pilot.click("#key-chip-menu")
+            assert await _wait_until(
+                pilot, lambda: isinstance(app.screen, ContextMenuScreen)
+            ), app.screen
+
+            screen = app.screen
+            bar = screen.query_one("#keybar", KeyBar)
+            assert bar.display is True
+            assert bar._key_context == "menu"
+            visible = [chip.id for chip in bar.query(KeyChip) if chip.display]
+            assert visible == [
+                "menu-chip-page_esc",
+                "menu-chip-page_up",
+                "menu-chip-page_down",
+                "menu-chip-page_enter",
+            ]
+            assert bar.region.bottom == screen.size.height  # dock: bottom
+
+            menu = screen.query_one(OptionList)
+            first = menu.highlighted
+            tree_line = tree.cursor_line
+
+            await pilot.click("#menu-chip-page_down")
+            await pilot.pause(0.15)
+            assert menu.highlighted == first + 1
+            assert isinstance(app.screen, ContextMenuScreen)  # 菜单没被关掉
+
+            await pilot.click("#menu-chip-page_up")
+            await pilot.pause(0.15)
+            assert menu.highlighted == first
+
+            # 保险（B4）：顶层是模态时，页面动作不会偷偷动被盖住的树
+            app._dispatch_page_action("cursor_down")
+            await pilot.pause(0.1)
+            assert tree.cursor_line == tree_line
+
+            # ENT = 选中当前项（copy_rel）→ 关菜单并执行
+            menu.highlighted = 1
+            await pilot.click("#menu-chip-page_enter")
+            assert await _wait_until(
+                pilot, lambda: isinstance(app.screen, MainScreen)
+            ), app.screen
+            assert app._copy_buffer == "notes.txt"
+
+            # 再开一次：ESC 关闭
+            await pilot.click("#key-chip-menu")
+            assert await _wait_until(
+                pilot, lambda: isinstance(app.screen, ContextMenuScreen)
+            ), app.screen
+            await pilot.click("#menu-chip-page_esc")
+            assert await _wait_until(
+                pilot, lambda: isinstance(app.screen, MainScreen)
+            ), app.screen
+
+    asyncio.run(scenario())
+
+
+def test_context_menu_has_no_keybar_outside_compact(app_root):
+    """桌面档菜单不带自己的底栏（主屏那条仍在且够用）。"""
+    async def scenario():
+        app = _app(FakeBackend(1), app_root)
+        async with app.run_test(size=(100, 30)) as pilot:
+            await pilot.pause(0.4)
+            tree = app.query_one("#file-tree")
+            tree.cursor_line = _tree_lines(tree).index("notes.txt")
+            await pilot.pause(0.1)
+            tree.open_menu()
+            assert await _wait_until(
+                pilot, lambda: isinstance(app.screen, ContextMenuScreen)
+            ), app.screen
+            assert list(app.screen.query(KeyBar)) == []
+            await pilot.press("escape")
+            assert await _wait_until(
+                pilot, lambda: isinstance(app.screen, MainScreen)
+            )
+    asyncio.run(scenario())
+
+
 def test_git_page_details_button_shows_the_commit_card(app_root):
     """Git 整页：Details 显示高亮提交的完整内容，再点收起。"""
     async def scenario():

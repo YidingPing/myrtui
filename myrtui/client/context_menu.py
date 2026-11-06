@@ -12,6 +12,12 @@
 ``overlay: screen`` 脱离文档流 + 运行时 ``absolute_offset`` 指向右键位置，
 CSS ``constrain: inside inflect`` 保证不越出屏幕边界。
 
+v0.11.2 起紧凑档带**自己的底栏**：菜单是整屏模态，主屏那条底栏在它后面，
+点在原位置会命中本屏的「点菜单外 → 关闭」。所以本屏在底部再挂一条
+``KeyBar(context="menu")``（id 前缀 ``menu-chip-``，不与主屏撞），由本屏把
+``↑`` / ``↓`` / ``ENT`` / ``ESC`` 翻译成 OptionList 的动作 / 关闭。非紧凑档
+或底栏开关关闭时不挂。
+
 菜单项是 ``(action_id, label)`` 数据表：选中后 ``dismiss(action_id)``，
 App 只认 id、不解析文案；以后加动作只需在数据表里加一行。
 
@@ -32,6 +38,8 @@ from textual.geometry import Offset
 from textual.screen import ModalScreen
 from textual.widgets import OptionList
 from textual.widgets.option_list import Option
+
+from myrtui.client.keybar import KeyBar, KeyChip
 
 
 class ContextMenuScreen(ModalScreen[str | None]):
@@ -57,6 +65,9 @@ class ContextMenuScreen(ModalScreen[str | None]):
         color: $text;
         constrain: inside inflect;
     }
+    ContextMenuScreen > KeyBar {
+        dock: bottom;
+    }
     """
 
     # desc 不参与渲染（show=False），所以这里不调 t()——类体在 import 时求值，
@@ -69,10 +80,19 @@ class ContextMenuScreen(ModalScreen[str | None]):
         self._x = int(x)
         self._y = int(y)
 
+    def _keybar_enabled(self) -> bool:
+        """紧凑档且本次运行开着底栏（与主屏 ``_apply_keybar_visibility`` 同口径）。"""
+        app = self.app
+        return bool(
+            getattr(app, "_compact", False) and getattr(app, "_keybar_on", False)
+        )
+
     def compose(self) -> ComposeResult:
         yield OptionList(
             *(Option(label, id=action_id) for action_id, label in self._items)
         )
+        if self._keybar_enabled():
+            yield KeyBar(id="keybar", context="menu", prefix="menu-chip")
 
     def on_mount(self) -> None:
         menu = self.query_one(OptionList)
@@ -80,6 +100,8 @@ class ContextMenuScreen(ModalScreen[str | None]):
         if menu.option_count:
             menu.highlighted = 0
         menu.focus()
+        for bar in self.query(KeyBar):
+            bar.set_visible(True)
 
     def on_option_list_option_selected(
         self, event: OptionList.OptionSelected
@@ -87,12 +109,33 @@ class ContextMenuScreen(ModalScreen[str | None]):
         event.stop()
         self.dismiss(event.option.id)
 
+    def on_key_chip_pressed(self, event: KeyChip.Pressed) -> None:
+        """菜单底栏：方向键 / ENT 操作菜单，ESC 关闭（不穿透到主屏）。"""
+        event.stop()
+        menu = self.query_one(OptionList)
+        if event.page_action == "cursor_up":
+            menu.action_cursor_up()
+        elif event.page_action == "cursor_down":
+            menu.action_cursor_down()
+        elif event.page_action == "activate":
+            menu.action_select()
+        elif event.page_action == "back":
+            self.action_cancel()
+
     def on_mouse_down(self, event: events.MouseDown) -> None:
         """点菜单外 → 关闭（点击不穿透到底下的树/panel）。"""
         menu = self.query_one(OptionList)
-        if not menu.region.contains(event.screen_x, event.screen_y):
-            event.stop()
-            self.dismiss(None)
+        if menu.region.contains(event.screen_x, event.screen_y):
+            return
+        # 底栏的键自己会 stop MouseDown；点在键与键之间的栏面上仍会冒到这里，
+        # 那不是「点菜单外」，别把菜单关掉。
+        for bar in self.query(KeyBar):
+            if bar.display and bar.region.contains(
+                event.screen_x, event.screen_y
+            ):
+                return
+        event.stop()
+        self.dismiss(None)
 
     def action_cancel(self) -> None:
         self.dismiss(None)
