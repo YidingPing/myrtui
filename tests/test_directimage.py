@@ -1,17 +1,26 @@
-"""kitty 直接贴图（``a=T``）：载荷、tmux 包装、控件渲染。
+"""kitty 直接贴图（``a=T``）：载荷、tmux 包装、定位与贴图。
 
 为什么单独立文件：``textual-image`` 的 TGP 只走 Unicode 占位符，而有些终端
 （手机 SSH app 实测）能画 ``a=T``、也回 ``i=..;OK``，却不答 ``a=q``、不实现
 ``U=1``。这条路径只用于「一屏一张静态图」的界面，**不**参与正文滚动。
+
+控件不走 Textual 的 segment 通道（它按单元格裁剪，会把 APC 尾巴切掉 → 白屏），
+而是 ``render()`` 铺空格、帧画完后直接写终端。
 """
 from __future__ import annotations
 
 import base64
 
 import pytest
-from textual.geometry import Size
+from textual.geometry import Region
 
 from myrtui.client import directimage
+
+
+class _Placed(directimage.DirectImage):
+    """绕过 layout：region 固定，测试直接看写出去的字节。"""
+
+    region = Region(2, 0, 10, 3)
 
 
 def test_display_sequence_has_placement_params():
@@ -40,45 +49,62 @@ def test_tmux_wrap_only_inside_tmux():
     assert "\x1b\x1b_G" in wrapped   # 内层 ESC 必须翻倍，tmux 才认
 
 
-def _render_text(widget) -> str:
-    renderable = widget.render()
-    return "".join(segment.text for segment in renderable.__rich_console__(None, None))
+def test_render_only_reserves_cells():
+    """render 里不能夹带转义：Textual 会按 cell 宽裁剪（白屏的真因）。"""
+    widget = _Placed(b"png")
+    text = widget.render()
+    assert "\x1b" not in text
+    lines = text.splitlines()
+    assert len(lines) == 3 and set(lines[0]) == {" "}
 
 
-def test_render_reserves_cells_then_paints():
-    widget = directimage.DirectImage(b"png-bytes")
-    widget._size = Size(20, 4)
-    text = _render_text(widget)
-    assert text.startswith(" " * 20)          # 先占住 cell
-    assert text.count("\n") == 4
-    assert "\x1b[4A" in text                  # 回到首行
-    assert "a=T" in text and "c=20" in text and "r=4" in text
+def test_paint_saves_cursor_moves_then_restores(monkeypatch):
+    written: list[str] = []
+    monkeypatch.setattr(directimage, "_write", written.append)
+
+    widget = _Placed(b"png-bytes", cols=10, rows=3)
+    widget.paint()
+    assert len(written) == 1
+    text = written[0]
+    assert text.startswith("\x1b7\x1b[1;3H")   # 存光标 + 定位到 region 左上角
+    assert "a=T" in text and "c=10" in text and "r=3" in text
     assert "i=%d" % widget.image_id in text
+    assert text.endswith("\x1b8")              # 还原光标
 
 
-def test_render_reuses_the_sequence_until_resized():
-    widget = directimage.DirectImage(b"png")
-    widget._size = Size(10, 2)
-    _render_text(widget)
-    first = widget._sequence
-    _render_text(widget)
-    assert widget._sequence == first
+def test_paint_wraps_the_whole_move_for_tmux(monkeypatch):
+    monkeypatch.setenv("TMUX", "/tmp/s,1,0")
+    written: list[str] = []
+    monkeypatch.setattr(directimage, "_write", written.append)
 
-    widget._size = Size(11, 2)
-    _render_text(widget)
-    assert widget._sequence != first and "c=11" in widget._sequence
+    _Placed(b"png", cols=4, rows=2).paint()
+    text = written[0]
+    # 光标移动也包在 passthrough 里：tmux 的屏幕模型不受影响
+    assert text.startswith("\x1bPtmux;")
+    assert "\x1b\x1b7\x1b\x1b[1;3H" in text
+    assert text.endswith("\x1b\\")
 
 
-def test_set_image_with_same_id_replaces_previous_page():
-    widget = directimage.DirectImage(b"page-1")
-    widget._size = Size(8, 2)
-    _render_text(widget)
+def test_paint_resizes_to_region_when_cells_unknown(monkeypatch):
+    written: list[str] = []
+    monkeypatch.setattr(directimage, "_write", written.append)
+
+    _Placed(b"png").paint()                    # 没传 cols/rows → 用 region
+    assert "c=10" in written[0] and "r=3" in written[0]
+
+
+def test_set_image_reuses_the_same_id(monkeypatch):
+    written: list[str] = []
+    monkeypatch.setattr(directimage, "_write", written.append)
+
+    widget = _Placed(b"page-1", cols=8, rows=2)
+    widget.paint()
     first = widget._sequence
     widget.set_image(b"page-2")
-    text = _render_text(widget)
+    widget.paint()
     assert widget._sequence != first
-    assert "cGFnZS0y" in text                 # "page-2"
-    assert "i=%d" % widget.image_id in text   # 同一个 id：终端里旧图被覆盖
+    assert "cGFnZS0y" in widget._sequence       # "page-2"
+    assert "i=%d" % widget.image_id in widget._sequence
 
 
 def test_png_bytes_accepts_path_bytes_and_pil(tmp_path):

@@ -207,6 +207,10 @@ def _make_image_widget(
     if width_cells and height_cells:
         widget.styles.width = int(width_cells)
         widget.styles.height = int(height_cells)
+        set_cells = getattr(widget, "set_cells", None)
+        if set_cells is not None:
+            # 直贴控件依赖确切 cell 数（首帧可能早于 layout）。
+            set_cells(int(width_cells), int(height_cells))
     else:
         # 拿不到像素尺寸时的兜底：自然尺寸 + 高度上限
         widget.styles.width = "auto"

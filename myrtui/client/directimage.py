@@ -7,10 +7,14 @@
 代价：**图不跟随单元格滚动**。所以只给「一屏一张静态图」的界面用（``v`` 整页
 视图、图片预览），Markdown 正文里滚动的公式/图片继续走 termtex / alt。
 
-画法沿用 ``textual-image`` Sixel renderable 的技巧：先在控件区域铺满空格把
-cell 占住，再 ``ESC7`` → 光标上移 ``rows`` 行 → ``a=T,C=1`` 贴图 → ``ESC8``
-还原光标。Textual 只要把这段文本写到控件左上角，定位由终端自己完成；页面吸附
-滚动时 Textual 会重写这些 cell，于是图片跟着重新发一遍。
+**为什么不走 Textual 的 render()**（0.12 实测）：把 ``\\x1b_G...`` 塞进 renderable
+的 segment 里，Textual 8 会按**单元格宽度**裁剪整行——一段 70 字符的贴图序列在
+60 列终端上会被砍掉尾巴（``\\x1b\\\\`` 和 ``\\x1b8`` 没了），终端永远等不到 APC
+结束符，表现就是「白屏」。``textual-image`` 的 sixel 用的是同样的写法，同样会踩。
+所以改成：``render()`` 只铺空格占位，等这一帧画完（``call_after_refresh``）再
+**直接写终端**：``ESC7`` 存光标 → ``CSI r;cH`` 定位到控件左上角 → 贴图 →
+``ESC8`` 还原。在 tmux 里整段包进 ``ESC Ptmux;``（含光标移动），这样 tmux 自己的
+屏幕模型完全不受影响。
 """
 from __future__ import annotations
 
@@ -23,17 +27,10 @@ import sys
 from itertools import count
 from pathlib import Path
 
-from rich.control import ControlType
-from rich.measure import Measurement
-from rich.segment import Segment
 from textual.widget import Widget
 
 log = logging.getLogger("myrtui.directimage")
 
-# Rich 会按自己的规则处理 segment 文本（宽度、换行），给个空控制码让它原样写出。
-_NULL_CONTROL = [(ControlType.CURSOR_FORWARD, 0)]
-
-# textual-image 的 IS_TMUX 在 import 时求值；这里每次现读环境，测试也好注入。
 _TMUX_PREFIX = "\x1bPtmux;"
 _TMUX_SUFFIX = "\x1b\\"
 
@@ -87,35 +84,11 @@ def _write(text: str) -> None:
         log.debug("kitty 直贴写终端失败", exc_info=True)
 
 
-class _DirectRenderable:
-    """Rich renderable：先占 cell，再把贴图序列交给终端。
-
-    结构与 ``textual_image.renderable.sixel`` 一致（它已在 Tabby 上真机验证过
-    Textual 会把这段文本原样写进终端）。
-    """
-
-    def __init__(self, cols: int, rows: int, sequence: str) -> None:
-        self._cols = cols
-        self._rows = rows
-        self._sequence = sequence
-
-    def __rich_console__(self, console, options):  # noqa: ARG002 —— 只按自己的尺寸
-        for _ in range(self._rows):
-            yield Segment(" " * self._cols + "\n")
-        yield Segment(
-            "\x1b7" + f"\x1b[{self._rows}A" + self._sequence + "\x1b8",
-            control=_NULL_CONTROL,
-        )
-
-    def __rich_measure__(self, console, options) -> Measurement:  # noqa: ARG002
-        return Measurement(self._cols, self._cols)
-
-
 class DirectImage(Widget):
     """一屏一张静态图，用 ``a=T`` 直接贴（不依赖 ``U=1`` 占位符）。
 
-    尺寸由调用方通过 ``styles.width/height`` 指定（cell）；控件只负责在
-    ``render`` 里把「空格 + 贴图序列」交给 Textual，滚出去 / 卸载时删图。
+    尺寸由 ``cols`` / ``rows`` 指定（cell；也用于 ``styles``）。控件本身只铺
+    空格占位，图像在帧画完后直接写终端。
     """
 
     DEFAULT_CSS = """
@@ -125,35 +98,85 @@ class DirectImage(Widget):
     }
     """
 
-    def __init__(self, image, *, image_id: int | None = None, **kwargs) -> None:
+    def __init__(
+        self,
+        image,
+        *,
+        cols: int = 0,
+        rows: int = 0,
+        image_id: int | None = None,
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
         self._payload = png_bytes(image)
         self.image_id = image_id if image_id is not None else next_image_id()
+        self._cells: tuple[int, int] | None = (cols, rows) if cols and rows else None
         self._cols = 0
         self._rows = 0
         self._sequence = ""
 
-    # ---------- 渲染 ----------
+    # ---------- 布局 / 渲染 ----------
+
+    def set_cells(self, cols: int, rows: int) -> None:
+        """固定贴图盒子（cell）：调用方知道确切尺寸，别依赖 layout 时机。"""
+        cols, rows = max(1, int(cols)), max(1, int(rows))
+        if self._cells == (cols, rows):
+            return
+        self._cells = (cols, rows)
+        self._cols = self._rows = 0
+        self.refresh()
+
+    def _box(self) -> tuple[int, int]:
+        if self._cells is not None:
+            return self._cells
+        region = self.region
+        return max(1, int(region.width)), max(1, int(region.height))
+
+    def render(self):
+        """只铺空格：图像在 ``_paint`` 里直接写终端（见模块头）。"""
+        cols, rows = self._box()
+        return "\n".join(" " * cols for _ in range(rows))
+
+    # ---------- 贴图 ----------
 
     def _build(self, cols: int, rows: int) -> str:
         if cols == self._cols and rows == self._rows and self._sequence:
             return self._sequence
         self._cols, self._rows = cols, rows
-        self._sequence = tmux_wrap(
-            display_sequence(self._payload, cols=cols, rows=rows, image_id=self.image_id)
+        self._sequence = display_sequence(
+            self._payload, cols=cols, rows=rows, image_id=self.image_id
         )
         return self._sequence
 
-    def render(self):
-        # ``outer_size`` 直接读 ``_size``：无边框/padding 时就是内容区，且测试
-        # 里不用跑一遍布局就能确定尺寸。
-        size = self.outer_size
-        cols = max(1, int(size.width))
-        rows = max(1, int(size.height))
+    def paint(self) -> None:
+        """把图贴到控件左上角（在 tmux 里整段走 passthrough）。"""
+        region = self.region
+        if region.width <= 0 or region.height <= 0:
+            return
+        cols, rows = self._box()
         sequence = self._build(cols, rows)
-        if not sequence:
-            return ""
-        return _DirectRenderable(cols, rows, sequence)
+        row, column = region.y + 1, region.x + 1
+        body = f"\x1b7\x1b[{row};{column}H{sequence}\x1b8"
+        _write(tmux_wrap(body))
+
+    def _paint_soon(self) -> None:
+        try:
+            self.call_after_refresh(self.paint)
+        except Exception:  # noqa: BLE001 —— 未挂载 / 退出竞态
+            log.debug("直贴排程失败", exc_info=True)
+
+    def on_mount(self) -> None:
+        self._paint_soon()
+
+    def on_show(self) -> None:  # pragma: no cover —— 被弹窗盖住再回来时补一帧
+        self._paint_soon()
+
+    def on_resize(self) -> None:
+        region = self.region
+        if region.width and region.height:
+            self._cells = (int(region.width), int(region.height))
+        self._cols = self._rows = 0
+        self._paint_soon()
 
     def on_unmount(self) -> None:
         """占用的图 id 必须还回去，否则终端里会一直攒着旧页。"""
@@ -165,7 +188,4 @@ class DirectImage(Widget):
         self._cols = self._rows = 0
         self._sequence = ""
         self.refresh()
-
-    def on_resize(self) -> None:
-        self._cols = self._rows = 0
-        self.refresh()
+        self._paint_soon()

@@ -303,7 +303,7 @@ class PagedDocScreen(QuietWhenCovered, ModalScreen[None], inherit_bindings=False
         background = self._colors[1]
         if widget_cls is directimage.DirectImage:
             # 直贴（a=T）的图不跟单元格滚动：只挂**一个**控件，翻页时换图。
-            widget = widget_cls(pages[0])
+            widget = widget_cls(pages[0], cols=cols, rows=rows)
             widget.styles.width = cols
             widget.styles.height = rows
             widget.styles.background = background
