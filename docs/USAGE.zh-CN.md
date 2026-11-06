@@ -566,9 +566,11 @@ myrtui-outer-fix
 
 环境变量：`MYRTUI_GRAPHICS` / `MYRTUI_CELL_PX`（见「环境变量」表）。
 
-> **外层 tmux**：tmux 3.8 支持 Sixel，但默认不认；需要
-> `set -ga terminal-features ',*:sixel'`，必要时再加
-> `set -g allow-passthrough on`。不配也能用，只是位图不出现。
+> **外层 tmux**：位图在 tmux 里是关闭的。tmux 不转发 Sixel，而是把它换成
+> `SIXEL IMAGE (宽x高)` 加一整屏 `+`（tmux 3.8 实测；往 `terminal-features`
+> 里加 `sixel` 也没用）。Kitty TGP 可以靠 `set -g allow-passthrough on` 穿透，
+> 但终端必须实现 Unicode 占位符（`U=1`）——kitty / Ghostty 可以，
+> WezTerm / Konsole 不行。想强制回落文本用 `MYRTUI_GRAPHICS=unicode`。
 
 > v0.36 只做 Unicode 公式与 GFM 文本；v0.37 在此之上加图片位图；v0.4 起
 > 文本预览的公式**只走 termtex**，整篇 LaTeX 排版用 `v`。Mermaid / 搜索 /

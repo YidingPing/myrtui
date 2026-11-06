@@ -32,6 +32,7 @@ from myrtui.client.mdpreview import (
     _rewrite_image_paragraphs,
 )
 from myrtui.client.mathtext import math_parser_factory
+from myrtui.i18n import t
 from myrtui.tmux_backend import CaptureResult, PaneInfo
 
 
@@ -114,7 +115,9 @@ def test_graphics_unicode_disables_bitmaps():
 
 
 def test_graphics_sixel_probe_reports_capability_and_cell():
-    caps, warning = graphics.detect("auto", probe=lambda: _caps(sixel=True, cell=(12, 24)), tty=True)
+    caps, warning = graphics.detect(
+        "auto", probe=lambda: _caps(sixel=True, cell=(12, 24)), tty=True, tmux=False
+    )
     assert warning is None
     assert caps.sixel is True
     assert caps.bitmaps is True
@@ -123,7 +126,10 @@ def test_graphics_sixel_probe_reports_capability_and_cell():
 
 
 def test_graphics_tgp_probe():
-    caps, _ = graphics.detect("auto", probe=lambda: _caps(tgp=True), tty=True)
+    caps, _ = graphics.detect(
+        "auto", probe=lambda: _caps(tgp=True), tty=True, tmux=False,
+        placeholders=lambda: True,
+    )
     assert caps.tgp is True
     assert caps.protocol == "tgp"
 
@@ -135,8 +141,90 @@ def test_graphics_forced_sixel_without_support_warns():
 
 
 def test_graphics_forced_tgp_disables_sixel():
-    caps, _ = graphics.detect("tgp", probe=lambda: _caps(sixel=True, tgp=True), tty=True)
+    caps, _ = graphics.detect(
+        "tgp", probe=lambda: _caps(sixel=True, tgp=True), tty=True, tmux=False,
+        placeholders=lambda: True,
+    )
     assert caps.sixel is False and caps.tgp is True
+
+
+def test_graphics_parse_placeholder_reply():
+    """kitty 特性查询回执的三种形态（「满屏 +」的判据）。"""
+    assert graphics.parse_placeholder_reply("\x1b_Gi=31,e=T,C=1,U=1;OK\x1b\\") is True
+    assert graphics.parse_placeholder_reply("\x1b_Gi=31,e=T;OK\x1b\\") is False
+    assert graphics.parse_placeholder_reply("\x1b_Gi=31;OK\x1b\\") is None
+    assert graphics.parse_placeholder_reply("\x1b[?1;2c") is None
+    assert graphics.parse_placeholder_reply("") is None
+
+
+def test_graphics_tmux_drops_sixel():
+    """tmux 把 sixel 画成 `SIXEL IMAGE` + 一整屏 `+`，auto 下直接不用。"""
+    caps, warning = graphics.detect(
+        "auto", probe=lambda: _caps(sixel=True), tty=True, tmux=True
+    )
+    assert caps.tmux is True
+    assert caps.sixel is False and caps.bitmaps is False
+    assert warning == t("gfx.tmux_sixel_blocked")
+
+
+def test_graphics_tgp_requires_placeholders():
+    caps, warning = graphics.detect(
+        "auto", probe=lambda: _caps(tgp=True), tty=True, tmux=False,
+        placeholders=lambda: False,
+    )
+    assert caps.tgp is False and caps.bitmaps is False
+    assert warning == t("gfx.tgp_no_placeholders")
+
+
+def test_graphics_tgp_unknown_support_only_trusts_kitty(monkeypatch):
+    """问不出特性时只信 kitty / Ghostty：`;OK` 不等于会画占位符。"""
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.delenv("TERM_PROGRAM", raising=False)
+    monkeypatch.delenv("KITTY_WINDOW_ID", raising=False)
+    caps, _ = graphics.detect(
+        "auto", probe=lambda: _caps(tgp=True), tty=True, tmux=False,
+        placeholders=lambda: None,
+    )
+    assert caps.tgp is False
+
+    monkeypatch.setenv("TERM", "xterm-kitty")
+    caps, _ = graphics.detect(
+        "auto", probe=lambda: _caps(tgp=True), tty=True, tmux=False,
+        placeholders=lambda: None,
+    )
+    assert caps.tgp is True
+
+
+def test_graphics_tgp_inside_tmux_needs_passthrough():
+    caps, warning = graphics.detect(
+        "auto", probe=lambda: _caps(tgp=True), tty=True, tmux=True,
+        placeholders=lambda: True, passthrough=lambda: False,
+    )
+    assert caps.tgp is False and caps.bitmaps is False
+    assert warning and graphics.TMUX_PASSTHROUGH_CMD in warning
+
+    caps, _ = graphics.detect(
+        "auto", probe=lambda: _caps(tgp=True), tty=True, tmux=True,
+        placeholders=lambda: True, passthrough=lambda: True,
+    )
+    assert caps.tgp is True
+
+
+def test_graphics_forced_tgp_keeps_unverified_with_warning(monkeypatch):
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.delenv("KITTY_WINDOW_ID", raising=False)
+    caps, warning = graphics.detect(
+        "tgp", probe=lambda: _caps(tgp=True), tty=True, tmux=False,
+        placeholders=lambda: None,
+    )
+    assert caps.tgp is True
+    assert warning == t("gfx.tgp_unverified", env=graphics.ENV_NAME)
+
+
+def test_graphics_describe_and_reason_name_tmux():
+    caps = graphics.Capabilities(mode="unicode", available=True, tmux=True)
+    assert "tmux" in graphics.describe(caps)
+    assert graphics.TMUX_PASSTHROUGH_CMD in graphics.blocked_reason(caps, env="auto")
 
 
 def test_graphics_non_tty_skips_probe_without_warning():
@@ -209,7 +297,7 @@ def test_graphics_describe_flags_missing_library():
 
 def test_graphics_invalid_mode_falls_back_to_auto():
     caps, warning = graphics.detect(
-        "bogus", probe=lambda: _caps(sixel=True), tty=True
+        "bogus", probe=lambda: _caps(sixel=True), tty=True, tmux=False
     )
     assert caps.sixel is True
     assert warning and "非法" in warning

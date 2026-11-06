@@ -360,9 +360,13 @@ Images are fitted to the viewport, never upscaled or modified. The header shows
 compositing happen in worker threads (transparent areas are composited against
 the theme background — terminals do not blend alpha). Limits: ≤ 10 MB,
 ≤ 4000×4000, first frame only for animated GIFs, no SVG. Without Sixel/Kitty
-support you still get the metadata and a hint. When running inside an outer
-tmux, Sixel needs `set -ga terminal-features ',*:sixel'` (and usually
-`set -g allow-passthrough on`). Which terminals have been measured is in the
+support you still get the metadata and a hint. **Inside an outer tmux, bitmaps
+are off**: tmux replaces a Sixel image with a `SIXEL IMAGE (WxH)` placeholder and
+a wall of `+` cells (measured on tmux 3.8; adding `sixel` to `terminal-features`
+does not help). Kitty TGP can pass through with `set -g allow-passthrough on`,
+but only if the terminal implements Unicode placeholders (`U=1`) — kitty and
+Ghostty do, WezTerm and Konsole do not. `MYRTUI_GRAPHICS=unicode` forces the
+text fallback. Which terminals have been measured is in the
 README under [Terminal support](../README.md#terminal-support).
 
 ## Splitters

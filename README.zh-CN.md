@@ -50,9 +50,11 @@ pane。一个项目一个会话，退出再进来还是原来的布局。
 | Tabby | Sixel | ✅ 已实测（macOS） |
 
 表里只列**实测过**的终端：没出现不等于不支持，只等于**没测过**。没有位图协议时
-预览会显示元信息与提示，不会白屏，也不影响 pane。在外层 tmux 里用 Sixel 还要加
-`set -ga terminal-features ',*:sixel'`——见
-[docs/USAGE.zh-CN.md](docs/USAGE.zh-CN.md) 的「在外层 tmux 里」一节。
+预览会显示元信息与提示，不会白屏，也不影响 pane。**在外层 tmux 里位图是关闭的**：
+tmux 不转发 Sixel，而是把它换成 `SIXEL IMAGE (宽x高)` 加一整屏 `+`（tmux 3.8
+实测；往 `terminal-features` 里加 `sixel` 也没用）。Kitty TGP 可以靠
+`set -g allow-passthrough on` 穿透，但终端必须实现 Unicode 占位符——myrtui
+两项都确认后才启用。见 [docs/USAGE.zh-CN.md](docs/USAGE.zh-CN.md) 的「在外层 tmux 里」一节。
 
 ### 移动端
 

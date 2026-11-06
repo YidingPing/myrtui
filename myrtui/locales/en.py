@@ -104,6 +104,13 @@ MESSAGES: dict[str, str] = {
     "gfx.mode_off": "Bitmaps are off because {env}={mode}; set it to auto to re-enable image previews",
     "gfx.missing_dep_long": "Bitmap dependencies missing (textual-image/Pillow): {hint} (needs Python >= 3.12)",
     "gfx.no_protocol": "This terminal has no Sixel/TGP bitmap protocol; LaTeX paging is unavailable",
+    "gfx.tmux_sixel_blocked": "Inside tmux, Sixel is replaced by tmux's 'SIXEL IMAGE' placeholder (a wall of '+'); Sixel is off",
+    "gfx.tmux_sixel_forced": "{env}=sixel forced inside tmux: tmux draws a wall of '+' instead of the image",
+    "gfx.tgp_no_placeholders": "The terminal answers the Kitty graphics query but cannot draw Unicode placeholders (U=1); images would show as a grid of characters",
+    "gfx.tgp_unverified": "{env}=tgp forced, but placeholder support was not confirmed; images may show as a grid of characters",
+    "gfx.tmux_passthrough_off": "tmux passthrough is off, so images cannot reach the terminal; run '{cmd}' and restart, or use {env}=unicode",
+    "gfx.tmux_passthrough_forced": "{env}=tgp forced, but tmux passthrough is off; run '{cmd}' and restart",
+    "gfx.tmux_blocked": "Running inside tmux: bitmap protocols cannot reach the terminal (Sixel shows as 'SIXEL IMAGE' plus a wall of '+'). Run '{cmd}' and restart for Kitty TGP, or set {env}=unicode",
 
     # ---- image preparation (imageprep.py) ----------------------------------
     "img.empty_path": "Image path is empty",

@@ -101,6 +101,13 @@ MESSAGES: dict[str, str] = {
     "gfx.mode_off": "位图已被 {env}={mode} 关闭；设为 auto 后重开预览",
     "gfx.missing_dep_long": "缺位图依赖 textual-image/Pillow：{hint}（需 Python ≥3.12）",
     "gfx.no_protocol": "当前终端没有 Sixel/TGP 位图协议，LaTeX 排版不可用",
+    "gfx.tmux_sixel_blocked": "在 tmux 里，Sixel 会被换成 tmux 的「SIXEL IMAGE」占位（一整屏 +），已关闭 Sixel",
+    "gfx.tmux_sixel_forced": "{env}=sixel 在 tmux 里被强制启用：tmux 只会画一整屏 +，不会显示图片",
+    "gfx.tgp_no_placeholders": "终端答了 kitty 图形查询，但画不了 Unicode 占位符（U=1），图片会变成字符网格",
+    "gfx.tgp_unverified": "{env}=tgp 被强制启用，但占位符支持未确认，图片可能变成字符网格",
+    "gfx.tmux_passthrough_off": "tmux 未开启穿透，图片到不了终端；执行 '{cmd}' 后重开，或改用 {env}=unicode",
+    "gfx.tmux_passthrough_forced": "{env}=tgp 被强制启用，但 tmux 未开启穿透；执行 '{cmd}' 后重开",
+    "gfx.tmux_blocked": "当前在 tmux 里：位图协议到不了终端（Sixel 会显示成「SIXEL IMAGE」加一整屏 +）。要用 Kitty TGP 请执行 '{cmd}' 后重开，或设 {env}=unicode",
 
     # ---- 图片预处理（imageprep.py）-----------------------------------------
     "img.empty_path": "图片路径为空",

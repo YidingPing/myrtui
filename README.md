@@ -58,8 +58,11 @@ log, Markdown, math) is plain cells and works anywhere.
 Only measured rows are listed: a terminal missing from this table is
 **untested**, not unsupported. Without a bitmap protocol the previews show
 metadata and a hint instead of an image; nothing breaks and no pane is affected.
-Inside an outer tmux, Sixel additionally needs
-`set -ga terminal-features ',*:sixel'` — see
+**Inside an outer tmux, bitmaps are off**: tmux does not forward Sixel — it
+substitutes a `SIXEL IMAGE (WxH)` placeholder made of `+` cells — and adding
+`sixel` to `terminal-features` does not change that (measured on tmux 3.8).
+Kitty TGP can pass through (`set -g allow-passthrough on`) when the terminal
+implements Unicode placeholders; myrtui checks both before using it. See
 [Inside another tmux](docs/USAGE.md#inside-another-tmux-uu-remote-a-local-mirror).
 
 ### Going mobile
