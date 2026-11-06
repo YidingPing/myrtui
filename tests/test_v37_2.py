@@ -507,6 +507,49 @@ def test_paged_screen_mounts_pages_with_exact_cell_size(monkeypatch, tmp_path):
     asyncio.run(scenario())
 
 
+def test_paged_screen_uses_direct_display_without_placeholders(monkeypatch, tmp_path):
+    """终端不能画占位符、但能 `a=T` 时，页图改用 DirectImage（不再白屏）。"""
+    from myrtui.client.directimage import DirectImage
+
+    spec = _spec(cols=110, rows=44)
+    page = _fake_png(tmp_path / "p1.png", size=spec.size)
+    monkeypatch.setattr(docpage, "cached_pages", lambda *a, **kw: [page])
+
+    async def scenario():
+        app = _paged_app(
+            [page],
+            caps=_caps(sixel=False, tgp=False, direct=True, mode="unicode"),
+        )
+        async with app.run_test(size=(110, 45)) as pilot:
+            await pilot.pause(0.4)
+            children = list(app.screen.query_one("#paged-scroll").children)
+            assert len(children) == 1
+            assert isinstance(children[0], DirectImage)
+            assert int(children[0].styles.width.value) == 110
+
+    asyncio.run(scenario())
+
+
+def test_paged_screen_prefers_placeholder_renderer_when_available(monkeypatch, tmp_path):
+    """能画占位符时不要退化成直贴（直贴的图不跟滚动）。"""
+    from myrtui.client.directimage import DirectImage
+
+    pytest.importorskip("textual_image")
+    spec = _spec(cols=110, rows=44)
+    page = _fake_png(tmp_path / "p1.png", size=spec.size)
+    monkeypatch.setattr(docpage, "cached_pages", lambda *a, **kw: [page])
+
+    async def scenario():
+        app = _paged_app([page], caps=_caps(direct=True))
+        async with app.run_test(size=(110, 45)) as pilot:
+            await pilot.pause(0.4)
+            children = list(app.screen.query_one("#paged-scroll").children)
+            assert len(children) == 1
+            assert not isinstance(children[0], DirectImage)
+
+    asyncio.run(scenario())
+
+
 def test_paged_screen_paints_chrome_with_palette(monkeypatch):
     """纸色必须同时铺到屏幕 / header / 滚动区，否则会露出白边和白色标题栏。"""
 

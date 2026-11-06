@@ -369,6 +369,12 @@ Ghostty do, WezTerm and Konsole do not. `MYRTUI_GRAPHICS=unicode` forces the
 text fallback. Which terminals have been measured is in the
 README under [Terminal support](../README.md#terminal-support).
 
+A terminal that draws images but **not** Unicode placeholders (some mobile SSH
+clients) still gets the `v` page view and the image preview: myrtui probes Kitty's
+direct display (`a=T`, one still image per screen) and uses it when placeholders
+are unavailable. Scrolling views keep the text fallbacks — a direct-display image
+does not move with the text.
+
 ## Splitters
 
 All splitters are one cell thick; press within ±1 cell of the line to grab it

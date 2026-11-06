@@ -25,7 +25,7 @@ from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
-from myrtui.client import docpage, graphics as graphics_mod
+from myrtui.client import directimage, docpage, graphics as graphics_mod
 from myrtui.client.overlay import QuietWhenCovered
 from myrtui.i18n import t
 
@@ -172,6 +172,8 @@ class PagedDocScreen(QuietWhenCovered, ModalScreen[None], inherit_bindings=False
         翻页偏移必须用它算：用容器当下的高度会在 resize 中间态漂移，产生
         「半页」→ 整屏位图重新编码（见 :class:`_PageScroll`）。
         """
+        self._direct = None
+        """直贴模式（``a=T``）下唯一的页图控件；非直贴时为 ``None``。"""
 
     @property
     def page_index(self) -> int:
@@ -298,8 +300,21 @@ class PagedDocScreen(QuietWhenCovered, ModalScreen[None], inherit_bindings=False
         # 盒子 = 滚动区本身（1 页 1 屏），不用 spec 反推，避免被最小尺寸夹过
         cols = max(1, int(container.size.width))
         rows = max(1, int(container.size.height))
-        widgets = []
         background = self._colors[1]
+        if widget_cls is directimage.DirectImage:
+            # 直贴（a=T）的图不跟单元格滚动：只挂**一个**控件，翻页时换图。
+            widget = widget_cls(pages[0])
+            widget.styles.width = cols
+            widget.styles.height = rows
+            widget.styles.background = background
+            await container.remove_children()
+            await container.mount(widget)
+            self._direct = widget
+            self._rows = rows
+            container.scroll_home(animate=False)
+            self._show_page(0)
+            return
+        widgets = []
         for path in pages:
             widget = widget_cls(path)
             widget.styles.width = cols
@@ -314,9 +329,9 @@ class PagedDocScreen(QuietWhenCovered, ModalScreen[None], inherit_bindings=False
         self._set_header(len(pages))
 
     def _widget_class(self):
-        from myrtui.client.mdpreview import _image_widget_class  # noqa: PLC0415 —— 避免循环 import
+        from myrtui.client.mdpreview import _static_widget_class  # noqa: PLC0415 —— 避免循环 import
 
-        return _image_widget_class(self._graphics)
+        return _static_widget_class(self._graphics)
 
     # ---------- 状态 ----------
 
@@ -344,6 +359,7 @@ class PagedDocScreen(QuietWhenCovered, ModalScreen[None], inherit_bindings=False
         self._page_no = 0
         self._page_index = 0
         self._rows = 0
+        self._direct = None
         self.query_one(f"#{HEADER_ID}", Static).update(self._relative)
 
     # ---------- 交互 ----------
@@ -364,12 +380,17 @@ class PagedDocScreen(QuietWhenCovered, ModalScreen[None], inherit_bindings=False
         if not self._pages:
             return
         index = max(0, min(len(self._pages) - 1, int(index)))
+        self._page_index = index
+        if self._direct is not None:
+            # 直贴：没有可滚动的第二屏，换图即可（同一 id 复用，旧页自动被替换）。
+            self._direct.set_image(self._pages[index])
+            self._show_page(index)
+            return
         try:
             container = self.query_one(f"#{SCROLL_ID}", _PageScroll)
         except Exception:  # noqa: BLE001 —— 卸载竞态
             return
         rows = max(1, int(self._rows or container.size.height or 1))
-        self._page_index = index
         container.scroll_to(y=index * rows, animate=False, immediate=True)
         self._show_page(index)
 
@@ -400,6 +421,8 @@ class PagedDocScreen(QuietWhenCovered, ModalScreen[None], inherit_bindings=False
 
     def _update_page(self) -> None:
         """位置变了就同步页号（键盘 / 滚轮以外的来源同样走这里）。"""
+        if self._direct is not None:
+            return  # 直贴模式没有滚动偏移，页号只由 goto_page 改
         if not self._pages or self._rows <= 0:
             return
         try:

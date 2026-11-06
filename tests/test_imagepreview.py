@@ -362,7 +362,7 @@ def test_image_screen_mounts_bitmap(tmp_path, monkeypatch):
             super().__init__(**kwargs)
             self.image = image
 
-    monkeypatch.setattr(imagepreview, "_image_widget_class", lambda caps: Dummy)
+    monkeypatch.setattr(imagepreview, "_static_widget_class", lambda caps: Dummy)
     caps = graphics.Capabilities(
         sixel=True, cell_width=10, cell_height=20, available=True, mode="sixel"
     )

@@ -134,6 +134,21 @@ def _image_widget_class(capabilities: graphics_mod.Capabilities):
     return SixelImage if capabilities.sixel else TGPImage
 
 
+def _static_widget_class(capabilities: graphics_mod.Capabilities):
+    """一屏一张**静态图**用的控件类：位图优先，其次 kitty 直接贴图。
+
+    直接贴图（``a=T``）的图不跟单元格滚动，所以只给 ``v`` 整页视图和图片预览
+    用；Markdown 正文里滚动的图片/公式仍走 :func:`_image_widget_class`。
+    """
+    widget_cls = _image_widget_class(capabilities)
+    if widget_cls is not None:
+        return widget_cls
+    if capabilities.direct:
+        from myrtui.client.directimage import DirectImage  # noqa: PLC0415 —— 避免循环
+        return DirectImage
+    return None
+
+
 def _display_cells(
     width_px: int,
     height_px: int,
@@ -732,7 +747,7 @@ class MarkdownPreviewScreen(QuietWhenCovered, ModalScreen[None], inherit_binding
 
     def action_paged(self) -> None:
         """``v``：整篇交给浏览器排版 → PDF 分页 → 位图滚动（只读逃生口）。"""
-        if not self._graphics.bitmaps:
+        if not (self._graphics.bitmaps or self._graphics.direct):
             self._notice(graphics_mod.blocked_reason(self._graphics), seconds=6.0)
             return
         if not self._text.strip():

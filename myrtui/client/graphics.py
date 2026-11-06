@@ -66,6 +66,15 @@ TMUX_PASSTHROUGH_CMD = "tmux set -g allow-passthrough on"
 FEATURE_QUERY_TIMEOUT = 0.4
 """kitty 特性查询的回执超时。正常终端毫秒级；0.4 s 只兜「问了不回」。"""
 
+DISPLAY_PROBE_TIMEOUT = 0.3
+"""``a=t`` 探测的等待时间：没有图形能力的终端一个字都不会回，别拖启动。"""
+
+_TINY_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzhV"
+    "AAAAAElFTkSuQmCC"
+)
+"""1×1 纯黑 PNG：``a=t`` 只传输不显示，用来换那句 ``i=..;OK``。"""
+
 _PLACEHOLDER_TERMS = ("xterm-kitty", "xterm-ghostty")
 """不做特性查询也能确认支持 ``U=1`` 的终端。
 
@@ -91,6 +100,13 @@ class Capabilities:
 
     tmux: bool = False
     """是否跑在 tmux / screen 里（决定 Sixel 能不能用、提示怎么写）。"""
+
+    direct: bool = False
+    """能不能用 ``a=T`` 直接贴图（不依赖 ``U=1`` 占位符）。
+
+    只服务「一屏一张静态图」的界面（``v`` 整页视图、图片预览）；正文里滚动的
+    图片/公式仍然需要占位符，所以 **``bitmaps`` 不因它变成 True**。
+    """
 
     note: str | None = None
     """这次判定的具体原因（可执行提示）；``blocked_reason`` 优先用它。
@@ -234,14 +250,26 @@ def parse_placeholder_reply(reply: str | None) -> bool | None:
     return None
 
 
-def placeholder_support(timeout: float = FEATURE_QUERY_TIMEOUT) -> bool | None:
-    """问终端：你画不画 ``U+10EEEE`` 占位符（kitty 特性查询 ``e=T,U=1``）？
+def parse_display_ack(reply: str | None, image_id: int) -> bool:
+    """``a=t`` 的回执（``\\x1b_Gi=<id>;OK\\x1b\\\\``）→ 终端真的处理了图形序列。"""
+    for match in re.finditer(r"\x1b_G([^\x1b]*)\x1b\\", reply or ""):
+        body = match.group(1).strip()
+        if body.endswith(";OK") and f"i={image_id}" in body:
+            return True
+    return False
 
-    返回 ``True`` / ``False``；**问不出来**（非 tty、超时、依赖缺失、老终端）
-    返回 ``None``。最坏耗时 ``timeout``，正常毫秒级。
 
-    注意：``textual-image`` 的 TGP 探测只问「支持图形协议吗」，答 ``;OK`` 的
-    终端可能根本画不了占位符（Konsole / WezTerm / 手机 app 都有实例）。
+def _kitty_reply(
+    sequence: str,
+    *,
+    done: Callable[[str], bool],
+    timeout: float,
+    then: str | None = None,
+) -> str | None:
+    """发一条 kitty 序列，收回复；``done(reply)`` 为真或超时即返回。
+
+    ``then`` 在读完（或超时）后写出去，用来顺手删掉探测用的临时图。
+    返回收到的原文（可能为空字符串 → ``None``）。
     """
     try:
         from textual_image._terminal import (  # noqa: PLC0415 —— 可选依赖
@@ -259,23 +287,55 @@ def placeholder_support(timeout: float = FEATURE_QUERY_TIMEOUT) -> bool | None:
     except Exception:  # noqa: BLE001 —— 极端环境（fd 已关）
         return None
 
-    query = prepare_terminal_sequence(
-        f"\x1b_Gi={int(time.time() * 1000) & 0xFFFF},a=q,e=T,U=1\x1b\\"
-    )
     reply = ""
     deadline = time.monotonic() + max(0.05, timeout)
     try:
         fd = sys.__stdin__.buffer.fileno()
         with capture_mode():
-            sys.__stdout__.write(query)
+            sys.__stdout__.write(prepare_terminal_sequence(sequence))
             sys.__stdout__.flush()
-            while time.monotonic() < deadline:
-                if parse_placeholder_reply(reply) is not None:
-                    break
+            while time.monotonic() < deadline and not done(reply):
                 reply += read(fd, 1, max(0.01, deadline - time.monotonic()))
+            if then:
+                sys.__stdout__.write(prepare_terminal_sequence(then))
+                sys.__stdout__.flush()
     except Exception:  # noqa: BLE001 —— 超时 / fd 竞态只意味着「不知道」
-        log.debug("kitty 特性查询失败", exc_info=True)
+        log.debug("kitty 查询失败", exc_info=True)
+    return reply or None
+
+
+def placeholder_support(timeout: float = FEATURE_QUERY_TIMEOUT) -> bool | None:
+    """问终端：你画不画 ``U+10EEEE`` 占位符（kitty 特性查询 ``e=T,U=1``）？
+
+    返回 ``True`` / ``False``；**问不出来**（非 tty、超时、依赖缺失、老终端）
+    返回 ``None``。最坏耗时 ``timeout``，正常毫秒级。
+
+    注意：``textual-image`` 的 TGP 探测只问「支持图形协议吗」，答 ``;OK`` 的
+    终端可能根本画不了占位符（Konsole / WezTerm / 手机 app 都有实例）。
+    """
+    reply = _kitty_reply(
+        "\x1b_Gi=31337,a=q,e=T,U=1\x1b\\",
+        done=lambda text: parse_placeholder_reply(text) is not None,
+        timeout=timeout,
+    )
     return parse_placeholder_reply(reply)
+
+
+def supports_direct_display(timeout: float = DISPLAY_PROBE_TIMEOUT) -> bool:
+    """能不能 ``a=T`` 直接贴图？发一张 1×1 图（不显示）看有没有 ``;OK``。
+
+    这一问是给「不答 ``a=q`` 查询、也不实现占位符」的终端准备的（手机 SSH app
+    实测：``a=T`` 画得出来、回执也有）。问不出来就当不支持——反正贴图失败
+    只会是空白。
+    """
+    image_id = int(time.time() * 1000) & 0xFFFF | 1
+    reply = _kitty_reply(
+        f"\x1b_Gi={image_id},a=t,t=d,f=100;{_TINY_PNG_B64}\x1b\\",
+        done=lambda text: parse_display_ack(text, image_id),
+        timeout=timeout,
+        then=f"\x1b_Ga=d,d=I,i={image_id},q=2\x1b\\",
+    )
+    return parse_display_ack(reply, image_id)
 
 
 def detect(
@@ -287,11 +347,12 @@ def detect(
     tmux: bool | None = None,
     placeholders: Callable[[], bool | None] | None = None,
     passthrough: Callable[[], bool | None] | None = None,
+    direct: Callable[[], bool | None] | None = None,
 ) -> tuple[Capabilities, str | None]:
     """探测能力 → ``(capabilities, warning)``。
 
     ``probe`` / ``tty`` / ``loader`` / ``tmux`` / ``placeholders`` /
-    ``passthrough`` 全部供测试注入；生产只用默认值。
+    ``passthrough`` / ``direct`` 全部供测试注入；生产只用默认值。
     """
     mode, warning = _normalize_mode(
         os.environ.get(ENV_NAME) if env is None else env
@@ -397,6 +458,11 @@ def detect(
                 )
 
     resolved = mode if (sixel or tgp) else "unicode"
+    direct_ok = False
+    if not (sixel or tgp):
+        # 占位符/六像素都不行时再问一句「能不能直接贴图」（a=T）。这一问只对
+        # 静态一屏一张图的界面有用，所以不改变 `bitmaps`。
+        direct_ok = bool((direct or supports_direct_display)())
     capabilities = Capabilities(
         sixel=sixel,
         tgp=tgp,
@@ -406,6 +472,7 @@ def detect(
         mode=resolved,
         tmux=in_tmux,
         note=warning,
+        direct=direct_ok,
     )
     if warning:
         log.warning(warning)
@@ -422,6 +489,11 @@ def describe(capabilities: Capabilities) -> str:
     """一行诊断文本（写进预览 header / 日志）。"""
     suffix = " (tmux)" if capabilities.tmux else ""
     if not capabilities.bitmaps:
+        if capabilities.direct:
+            return (
+                f"graphics=tgp-direct "
+                f"cell={capabilities.cell_width}x{capabilities.cell_height}{suffix}"
+            )
         text = f"graphics={capabilities.mode}"
         if capabilities.mode != "off" and not capabilities.available:
             text += t("gfx.missing_dep_short")

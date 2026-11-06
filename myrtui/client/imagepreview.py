@@ -34,8 +34,8 @@ from myrtui.client.mdpreview import (
     DEFAULT_BACKGROUND,
     DEFAULT_FOREGROUND,
     _display_cells,
-    _image_widget_class,
     _make_image_widget,
+    _static_widget_class,
 )
 from myrtui.i18n import t
 
@@ -281,7 +281,7 @@ class ImagePreviewScreen(
         background: str,
     ) -> None:
         container = self.query_one(f"#{SCROLL_ID}", VerticalScroll)
-        widget_cls = _image_widget_class(self._graphics)
+        widget_cls = _static_widget_class(self._graphics)
         if widget_cls is None:
             await self._show_status_async(
                 graphics_mod.blocked_reason(self._graphics)

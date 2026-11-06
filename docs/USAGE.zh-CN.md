@@ -572,6 +572,11 @@ myrtui-outer-fix
 > 但终端必须实现 Unicode 占位符（`U=1`）——kitty / Ghostty 可以，
 > WezTerm / Konsole 不行。想强制回落文本用 `MYRTUI_GRAPHICS=unicode`。
 
+> **能画图、但不会占位符的终端**（部分手机 SSH app）：`v` 整页视图和图片预览
+> 仍可用 —— myrtui 会探测 Kitty 的**直接贴图**（`a=T`，一屏一张静态图）并在
+> 占位符不可用时改用它。滚动的内容（正文里的公式 / 图片）不适用：直接贴的图
+> 不跟文字滚动，那里继续用 termtex Unicode / alt。
+
 > v0.36 只做 Unicode 公式与 GFM 文本；v0.37 在此之上加图片位图；v0.4 起
 > 文本预览的公式**只走 termtex**，整篇 LaTeX 排版用 `v`。Mermaid / 搜索 /
 > 编辑 / 源码视图仍不做。

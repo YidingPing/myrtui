@@ -244,6 +244,40 @@ def test_graphics_reason_prefers_measured_note():
     assert graphics.TMUX_PASSTHROUGH_CMD in graphics.blocked_reason(nose, env="auto")
 
 
+def test_graphics_direct_display_is_the_last_resort():
+    """占位符/六像素都不行时，再问一句 `a=T` 能不能贴图。"""
+    called = []
+
+    def direct():
+        called.append(True)
+        return True
+
+    caps, _ = graphics.detect(
+        "auto", probe=lambda: _caps(), tty=True, tmux=True, direct=direct
+    )
+    assert called == [True]
+    assert caps.direct is True
+    assert caps.bitmaps is False          # 正文滚动仍然不能用位图
+    assert "tgp-direct" in graphics.describe(caps)
+
+
+def test_graphics_direct_not_probed_when_sixel_works():
+    called = []
+    caps, _ = graphics.detect(
+        "auto", probe=lambda: _caps(sixel=True), tty=True, tmux=False,
+        direct=lambda: called.append(True) or True,
+    )
+    assert called == []
+    assert caps.direct is False
+
+
+def test_graphics_parse_display_ack():
+    assert graphics.parse_display_ack("\x1b_Gi=7;OK\x1b\\", 7) is True
+    assert graphics.parse_display_ack("\x1b_Gi=8;OK\x1b\\", 7) is False
+    assert graphics.parse_display_ack("", 7) is False
+    assert graphics.parse_display_ack(None, 7) is False
+
+
 def test_graphics_non_tty_skips_probe_without_warning():
     called = []
 
