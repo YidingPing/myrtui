@@ -16,7 +16,12 @@ from myrtui.tmux_backend import (
     TmuxError,
     parse_tmux_version,
 )
-from myrtui.client.app import map_key
+from myrtui.client.app import (
+    _rewrite_kitty_flags,
+    default_kitty_flags,
+    map_key,
+    resolve_kitty_flags,
+)
 from myrtui.client.pane_widget import parse_sgr_line, _char_index_at_cell
 
 
@@ -67,6 +72,15 @@ def test_parse_tmux_version(out, expected):
         ("ctrl+alt+x", None, ("keys", "C-M-x")),
         ("ctrl+shift+left", None, ("keys", "C-S-Left")),
         ("alt+enter", None, ("keys", "M-Enter")),
+        # 扩展序列的关联文本会把控制字符写进键名（0.13）：
+        # xterm modifyOtherKeys 的 Enter 是 CSI 27;mod;13~，Kitty 的 Ctrl-J
+        # 关联文本是 LF → 不还原会拼出非法的 "S-\r" / "C-\n"。
+        ("shift+\r", "\r", ("keys", "S-Enter")),
+        ("ctrl+\r", "\r", ("keys", "C-Enter")),
+        ("alt+\r", "\r", ("keys", "M-Enter")),
+        ("ctrl+\n", "\n", ("keys", "C-j")),
+        ("\r", "\r", ("keys", "Enter")),
+        ("\n", "\n", ("keys", "Enter")),
         # 无法映射：未知修饰键 / 无 character 的未知键
         ("super+x", None, None),
         ("super", None, None),
@@ -75,6 +89,55 @@ def test_parse_tmux_version(out, expected):
 )
 def test_map_key(key, char, expected):
     assert map_key(key, char) == expected
+
+
+# ---------- Kitty 旗标覆盖（iTerm2 3.7.x 兼容） ----------
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (None, None),
+        ("", None),
+        ("5", 5),
+        (" 17 ", 17),
+        ("0x11", 17),
+        ("1", 1),
+        ("32", None),      # 旗标只有 5 位
+        ("-1", None),
+        ("abc", None),
+    ],
+)
+def test_resolve_kitty_flags(raw, expected):
+    assert resolve_kitty_flags(raw) == expected
+
+
+def test_rewrite_kitty_flags_only_touches_enable_sequence():
+    """只改 ``CSI > N u``，其他驱动输出与 csi-u 之外的控制序列原样保留。"""
+    assert _rewrite_kitty_flags("\x1b[>25u", 5) == "\x1b[>5u"
+    assert _rewrite_kitty_flags("\x1b[>25u", 0) == "\x1b[>0u"
+    assert _rewrite_kitty_flags("\x1b[<u", 5) == "\x1b[<u"
+    assert _rewrite_kitty_flags("\x1b[>4;2m", 5) == "\x1b[>4;2m"
+    assert _rewrite_kitty_flags("hello", 5) == "hello"
+
+
+@pytest.mark.parametrize(
+    "env,expected",
+    [
+        ({"TERM_PROGRAM": "iTerm.app"}, 1),
+        ({"LC_TERMINAL": "iTerm2"}, 1),  # ssh 里通常只剩这条
+        ({"TERM_PROGRAM": "Apple_Terminal"}, None),
+        ({"TERM_PROGRAM": "Tabby"}, None),
+        ({}, None),
+    ],
+)
+def test_default_kitty_flags_is_iterm_only(env, expected):
+    """iTerm2 的 report-all 会丢 Ctrl；只在那里降到 flags=1。"""
+    assert default_kitty_flags(env) == expected
+
+
+def test_default_kitty_flags_reads_process_environment(monkeypatch):
+    monkeypatch.setenv("TERM_PROGRAM", "iTerm.app")
+    assert default_kitty_flags() == 1
 
 
 # ---------- SGR 解析 ----------

@@ -559,6 +559,9 @@ def main(argv: list[str] | None = None) -> int:
                     "之后新建的 pane（tmux 在创建时快照选项）。",
                     file=sys.stderr,
                 )
+        # 新会话在 create_session 里已带；已存在的会话没有，启动时补一次
+        # （幂等）。否则 pane 里的 TUI 收不到 Shift+Enter / Ctrl-J 的区分。
+        backend.enable_extended_keys()
         # 0.6.0：常驻 control 客户端（INPUT-LATENCY §2.3）。必须在建会话 /
         # 下发选项之后挂——那几步走 exec。auto 模式失败只告警、保持 exec；
         # control 模式（验收用）失败则报错退出。
@@ -577,7 +580,13 @@ def main(argv: list[str] | None = None) -> int:
     graphics = detect_silent()
     log.debug("terminal graphics: %s", describe(graphics))
 
-    from myrtui.client.app import TerminalApp
+    from myrtui.client.app import (
+        KITTY_FLAGS_ENV,
+        TerminalApp,
+        apply_kitty_flags_override,
+        default_kitty_flags,
+        resolve_kitty_flags,
+    )
 
     app = TerminalApp(
         backend,
@@ -586,6 +595,12 @@ def main(argv: list[str] | None = None) -> int:
         stop_path=stop_path_for(digest),
         layout_path=layout_path_for(digest),
         graphics=graphics,
+    )
+    # 即将接管终端前才打补丁：Textual 的 Kitty 旗标在 app.run() 里写出。
+    # 显式环境变量优先；否则 iTerm2 自动降到 flags=1（见 app 模块注释）。
+    kitty_flags = resolve_kitty_flags(os.environ.get(KITTY_FLAGS_ENV))
+    apply_kitty_flags_override(
+        kitty_flags if kitty_flags is not None else default_kitty_flags()
     )
     # TUI 即将接管终端：日志改落盘，避免 warning 画到光标处（见函数文档）
     redirect_logging_to_file()

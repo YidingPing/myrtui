@@ -119,6 +119,35 @@ current run; `MYRTUI_KEYBAR=off` disables it permanently.
 `Ctrl-a c` / `v` / `g` take three letters away from the shell; `Ctrl-a o` is
 free and passes `o` through like any undefined prefix key.
 
+### Newline keys (`Ctrl-J` / `Shift+Enter`)
+
+myrtui does not bind either key — both are forwarded to the focused pane. Two
+independent layers decide whether the inner program can tell them apart:
+
+- **tmux (inside myrtui)**: myrtui starts its server with `extended-keys on`
+  (tmux ≥ 3.5). A program that requests xterm `modifyOtherKeys` mode 2 receives
+  `CSI 27;5;106~` for Ctrl-J and `CSI 27;2;13~` for Shift+Enter instead of a
+  bare `LF` / `CR`; programs that do not request it are unchanged. Without this
+  the inner TUI sees "submit" for both.
+- **The terminal (outside myrtui)**: Shift+Enter exists only if the terminal
+  reports a modified Enter. In iTerm2 use a current build and enable
+  *Settings → Profiles → Keys → General → "Apps can change how keys are
+  reported"* (the Kitty keyboard protocol); older builds can enable *"Report
+  modifiers using CSI u"* instead. Terminal.app sends a plain Enter for
+  Shift+Enter. Ctrl-J needs no terminal support (it is `LF`, `0x0a`).
+- **iTerm2 3.7.x**: in Kitty "report all keys" mode it drops the Control
+  modifier from Ctrl+letter (Ctrl-J arrives as a plain `j`). myrtui detects
+  iTerm2 and requests only `flags=1` (disambiguate), which keeps both keys;
+  set `MYRTUI_KITTY_FLAGS` to override it for debugging.
+- **myrtui inside another tmux**: the outer server flattens modified keys too.
+  `tmux set -g extended-keys always` on that server forces mode 1 (so
+  Shift+Enter survives), at the cost of changing key reports for every program
+  in the server. Ctrl-J passes either way.
+
+Some TUIs request only the Kitty keyboard protocol, which tmux 3.8 and earlier
+do not forward; inside a pane they may still not see Shift+Enter. `Ctrl-J` (or
+the `C-J` key-bar button) is the portable "newline without submitting".
+
 ## Panes, layouts and focus
 
 Layouts are column-first:
@@ -555,6 +584,8 @@ over it, release, and the rendered line (command and all) lands in the clipboard
 | `MYRTUI_LOOP_DEBUG` | — | `=1` logs event-loop delays > 30 ms to stderr (profiling) |
 | `MYRTUI_LOG` | platform log dir | where warnings go once the TUI owns the terminal (`~/Library/Logs/myrtui/myrtui.log` on macOS, `~/.local/state/myrtui/log/` on Linux); empty disables |
 | `MYRTUI_MOUSE_DEBUG` | — | `=1` logs every mouse event to `<tmp>/myrtui-mouse-debug-<pid>.log` |
+| `MYRTUI_KEY_DEBUG` | — | `=1` logs every key (Textual name + character + focus) to `<tmp>/myrtui-key-debug-<pid>.log`; use it when a modified key "does nothing" |
+| `MYRTUI_KITTY_FLAGS` | — | override the Kitty keyboard-protocol flags Textual requests (`25` = Textual's default, `1` = iTerm2 workaround). iTerm2 3.7.x loses Control on letters in report-all mode, so myrtui already requests `1` there automatically |
 
 Idle throttling is manual on purpose: there is no portable way to know whether
 the terminal window is focused, so myrtui does not guess. Input bursts still run

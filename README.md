@@ -175,7 +175,8 @@ the full cheat sheet. Full tables: [docs/USAGE.md](docs/USAGE.md#key-bindings).
 | `MYRTUI_CELL_PX` | override the terminal cell size (`10x20`) when it is not reported |
 | `MYRTUI_CHROME` | Chrome/Chromium binary for the LaTeX page view |
 | `MYRTUI_PDFTOCAIRO` | PDF → PNG converter (`pdftocairo` preferred, then `pdftoppm`) |
-| `MYRTUI_LOOP_DEBUG` / `MYRTUI_MOUSE_DEBUG` | write timing / mouse event diagnostics to stderr or a temp log |
+| `MYRTUI_LOOP_DEBUG` / `MYRTUI_MOUSE_DEBUG` / `MYRTUI_KEY_DEBUG` | write timing / mouse / key diagnostics to stderr or a temp log |
+| `MYRTUI_KITTY_FLAGS` | override the Kitty keyboard flags Textual requests (`1` is used automatically under iTerm2 3.7.x, which loses Ctrl in report-all mode) |
 
 </details>
 

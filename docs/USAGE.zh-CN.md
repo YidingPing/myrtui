@@ -107,6 +107,8 @@ window/pane 创建时快照选项，`Ctrl-a r` 重开的也是建窗时记录的
 | `MYRTUI_LOG` | TUI 接管终端后 warning 写到哪里（默认平台日志目录：macOS `~/Library/Logs/myrtui/myrtui.log`、Linux `~/.local/state/myrtui/log/`）；空串 = 不落盘。启动前的 CLI 错误仍走 stderr。 |
 | `MYRTUI_LOOP_DEBUG` | `=1` 时把事件循环迟到 > 30ms 的事件写到 stderr（性能遥测，排障/验收用，默认关闭、无行为影响）。 |
 | `MYRTUI_MOUSE_DEBUG` | `=1` 时把每个鼠标事件与拖拽结论写进 `<tmp>/myrtui-mouse-debug-<pid>.log`（排障用，默认关闭）。 |
+| `MYRTUI_KEY_DEBUG` | `=1` 时把每个键（Textual 键名 + 关联文本 + 焦点）写进 `<tmp>/myrtui-key-debug-<pid>.log`；排查「某个组合键没反应」时用。 |
+| `MYRTUI_KITTY_FLAGS` | 覆盖 Textual 启动时请求的 Kitty 键盘协议旗标（`25` = Textual 默认，`1` = iTerm2 兼容值）。iTerm2 3.7.x 在 report-all 模式下会丢 Ctrl，myrtui 在 iTerm2 里已自动改用 `1`。 |
 | `MYRTUI_COPY_ON_SELECT` | 左键拖拽松手后是否**自动复制**（默认 `1`；`0/false/no/off` 关闭）。关闭后选区保持高亮 10s，按 `Ctrl-a c` 复制，其他键 / 点击 / 滚轮取消。 |
 | `MYRTUI_DRAG_SELECT` | `smart`（默认）= 真终端约定：pane 内程序请求了鼠标就把拖动转给它（vim `mouse=a`、`ov` 拖选、opencode 选择即复制），**Shift + 拖动**才由 myrtui 选字；`always` = 左键拖拽**永远**由 myrtui 选字（v0.35 行为）；`app` = 只要程序请求了鼠标就转给它，没有 Shift 逃生口。 |
 | `MYRTUI_CLIPBOARD` | 复制通道：`auto`（默认，OSC 52 + 系统命令都发）/ `osc52`（只发 OSC 52）/ `system`（只调系统命令）。非法值告警后按 `auto`。 |
@@ -170,6 +172,32 @@ myrtui stop [目标]   # 结束实例：请前端干净退场后 kill tmux 会�
 紧凑档底部是 3 行高的常用键栏：pane 里发送 `ESC` / `ENT` / `⇧ ⇥` / `/` / `@` /
 `↑` / `↓` / `C-J` / `DEL`；文件树和 Git 整页会换成各自的按钮。
 顶栏 `KEY` 只开关本次运行；`MYRTUI_KEYBAR=off` 永久关闭。
+
+### 换行键（`Ctrl-J` / `Shift+Enter`）
+
+myrtui 自己不绑定这两个键，都原样转给当前 pane。内层程序能不能分清「换行」
+和「提交」，取决于两层：
+
+- **myrtui 里的 tmux**：建会话时下发 `extended-keys on`（tmux ≥ 3.5）。主动
+  请求 xterm `modifyOtherKeys` mode 2 的程序会收到 `CSI 27;5;106~`（Ctrl-J）
+  与 `CSI 27;2;13~`（Shift+Enter），而不是裸 `LF` / `CR`；没请求的程序行为
+  不变。没有这一条，内层 TUI 看到的两者都是「提交」。
+- **外层终端**：Shift+Enter 只有终端愿意上报「带修饰键的回车」时才存在。
+  iTerm2 请用较新版本，并在 *Settings → Profiles → Keys → General* 打开
+  *"Apps can change how keys are reported"*（Kitty 键盘协议）；老版本可改用
+  *"Report modifiers using CSI u"*。Terminal.app 的 Shift+Enter 就是普通回车。
+  Ctrl-J 不依赖终端（它就是 `LF`，`0x0a`）。
+- **iTerm2 3.7.x**：在 Kitty 的 report-all-keys 模式下会把 Ctrl+字母的
+  Control 吃掉（Ctrl-J 到程序里变成普通 `j`）。myrtui 检测到 iTerm2 时会
+  只请求 `flags=1`（disambiguate），两个键都能保住；排障可用
+  `MYRTUI_KITTY_FLAGS` 覆盖。
+- **myrtui 套在外层 tmux 里**：外层 tmux 也会压平修饰键。在**外层**服务器执行
+  `tmux set -g extended-keys always` 会强制 mode 1（Shift+Enter 能活下来），
+  代价是那个服务器里所有程序的按键上报都变；Ctrl-J 不受影响。
+
+有些 TUI 只请求 Kitty 键盘协议，而 tmux 3.8 及更早不会转发它——这类程序在
+pane 里可能仍然收不到 Shift+Enter。`Ctrl-J`（或底栏的 `C-J` 按钮）是跨终端
+最稳的「换行但不提交」。
 
 文件打开动作都在**文件树上下文菜单**里：文件行 `打开（编辑器）` / `预览 Markdown`
 （仅 md）/ `预览图片`（仅图片，且不再有「打开」）/ `复制相对路径` /

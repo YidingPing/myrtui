@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shlex
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -72,11 +74,95 @@ def _wait_dead(backend: TmuxBackend, pane_id: str, timeout: float = 10.0) -> Non
     raise AssertionError(f"pane {pane_id} 未进入 dead 状态")
 
 
+def _capture(backend: TmuxBackend, pid: str) -> str:
+    info = next(p for p in backend.list_panes() if p.pane_id == pid)
+    _, caps = backend.poll({pid: (0, info.height)})
+    return caps[pid].text
+
+
+def _wait_shell_ready(backend: TmuxBackend, pid: str, timeout: float = 10.0) -> None:
+    """等 pane 内 shell 可执行命令（打字就绪握手，不靠固定 sleep）。"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        backend.send_text(pid, "printf __MYRTUI_READY__")
+        backend.send_keys(pid, "Enter")
+        time.sleep(0.2)
+        if "__MYRTUI_READY__" in _capture(backend, pid):
+            return
+    raise AssertionError("pane 内 shell 未在 10s 内就绪")
+
+
 # ---------- §12 P2：启动参数（后端） ----------
 
 def test_create_session_default_scrollback(backend):
     """缺省 history-limit 仍是 §11 的 5000（--scrollback 只是覆盖它）。"""
     assert int(_show(backend, "history-limit")) == DEFAULT_HISTORY_LIMIT == 5000
+
+
+def test_create_session_enables_extended_keys(backend):
+    """extended-keys 默认 off → Ctrl-J 就是裸 LF、Shift+Enter 就是 Enter。"""
+    if not backend.supports_extended_keys():
+        pytest.skip("tmux < 3.5 没有 modifyOtherKeys mode 2")
+    assert _show(backend, "extended-keys") == "on"
+
+
+def test_modified_keys_are_distinct_inside_pane(backend, tmp_path):
+    """pane 程序请求 mode 2 后，Enter / Shift+Enter / Ctrl-J 各自可区分。
+
+    这是 iTerm2 里 Shift+Enter、Ctrl-J「没反应」的根因：myrtui 已把
+    shift+enter / ctrl+j 交给 tmux，但 tmux 默认把它们压成 CR / LF，
+    pane 里的 TUI 只能当成「提交」。
+    """
+    if not backend.supports_extended_keys():
+        pytest.skip("tmux < 3.5 没有 modifyOtherKeys mode 2")
+    probe = tmp_path / "probe.py"
+    log = tmp_path / "keys.bin"
+    probe.write_text(
+        "import os, sys, tty\n"
+        "tty.setraw(0)\n"
+        "os.write(1, b'\\x1b[>4;2m')\n"  # 请求 modifyOtherKeys mode 2
+        "with open(sys.argv[1], 'wb', buffering=0) as out:\n"
+        "    while True:\n"
+        "        data = os.read(0, 64)\n"
+        "        if not data:\n"
+        "            break\n"
+        "        out.write(data)\n"
+    )
+    pid = backend.list_panes()[0].pane_id
+    _wait_shell_ready(backend, pid)
+    command = (
+        f"{shlex.quote(sys.executable)} "
+        f"{shlex.quote(str(probe))} {shlex.quote(str(log))}"
+    )
+    backend.send_text(pid, command)
+    backend.send_keys(pid, "Enter")
+
+    deadline = time.time() + 10.0
+    while time.time() < deadline:
+        if log.exists():
+            break
+        time.sleep(0.1)
+    assert log.exists(), _capture(backend, pid)
+
+    # mode 请求是程序输出，tmux 解析可能有延迟；重复发直到看到期望序列。
+    expected = (
+        b"\x1b[27;2;13~",  # Shift+Enter
+        b"\x1b[27;5;13~",  # Ctrl+Enter
+        b"\x1b[27;5;106~",  # Ctrl-J（不再是裸 LF）
+    )
+    while time.time() < deadline:
+        backend.send_keys(pid, "Enter")
+        backend.send_keys(pid, "S-Enter")
+        backend.send_keys(pid, "C-Enter")
+        backend.send_keys(pid, "C-j")
+        time.sleep(0.2)
+        data = log.read_bytes()
+        if all(seq in data for seq in expected):
+            break
+    data = log.read_bytes()
+    for seq in expected:
+        assert seq in data, (seq, data)
+    assert b"\r" in data  # 裸 Enter 仍走老式 CR
 
 
 def test_create_session_shell_and_scrollback(backend):

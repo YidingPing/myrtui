@@ -35,6 +35,10 @@ log = logging.getLogger("myrtui.tmux")
 
 # 版本下限：capture-pane -N 为 3.1 新增（M4）
 MIN_TMUX_VERSION = (3, 1)
+# extended-keys 选项出现在 3.2；3.5 才把 mode 2（所有键都扩展编码）做对。
+# 低于 3.5 时下发它拿不到「Ctrl-J 与 Enter 不同」的结果，3.1 上还会让
+# create_session 的整条命令串失败，所以只对 3.5+ 下发。
+EXTENDED_KEYS_MIN_VERSION = (3, 5)
 _VERSION_RE = re.compile(r"(\d+)\.(\d+)")
 
 # list-panes 输出字段：设计文档 §4.2 的 8 项 + height/width/window_id/window_index
@@ -541,6 +545,33 @@ class TmuxBackend:
         self._buffer_next = 0.0
         self._buffer_seen: str | None = None
         self._buffer_ready = False
+        # tmux -V 只探一次：extended-keys 是否可下发取决于版本（见
+        # EXTENDED_KEYS_MIN_VERSION），建会话与补选项两处都要问。
+        self._tmux_version_probed = False
+        self._tmux_version: tuple[int, int] | None = None
+
+    def tmux_version(self) -> tuple[int, int] | None:
+        """``tmux -V`` 的解析结果（缓存；解析失败返回 ``None``）。"""
+        if not self._tmux_version_probed:
+            self._tmux_version_probed = True
+            try:
+                proc = subprocess.run(
+                    [self.tmux, "-V"],
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+            except (OSError, subprocess.SubprocessError):
+                self._tmux_version = None
+            else:
+                self._tmux_version = parse_tmux_version(proc.stdout)
+        return self._tmux_version
+
+    def supports_extended_keys(self) -> bool:
+        """tmux 是否支持 modifyOtherKeys mode 2 的扩展键输出。"""
+        version = self.tmux_version()
+        return version is not None and version >= EXTENDED_KEYS_MIN_VERSION
 
     # ---------- 剪贴板直通（0.7.0） ----------
 
@@ -900,18 +931,22 @@ class TmuxBackend:
         shell = shell or os.environ.get("SHELL") or "/bin/zsh"
         if history_limit is None:
             history_limit = DEFAULT_HISTORY_LIMIT
-        self._run(
-            [
-                "start-server", ";",
-                "set", "-g", "default-terminal", "tmux-256color", ";",
-                "set", "-g", "remain-on-exit", "on", ";",
-                "set", "-g", "history-limit", str(history_limit), ";",
-                "set", "-g", "default-shell", shell, ";",
-                "set", "-g", "set-clipboard", "on", ";",
-                "new-session", "-d", "-s", self.session,
-                "-c", root, "-x", str(cols), "-y", str(rows),
-            ]
-        )
+        args = [
+            "start-server", ";",
+            "set", "-g", "default-terminal", "tmux-256color", ";",
+            "set", "-g", "remain-on-exit", "on", ";",
+            "set", "-g", "history-limit", str(history_limit), ";",
+            "set", "-g", "default-shell", shell, ";",
+            "set", "-g", "set-clipboard", "on", ";",
+        ]
+        # 与上面几条一样必须在 new-session 之前（pane 程序启动后才读得到）。
+        if self.supports_extended_keys():
+            args.extend(["set", "-g", "extended-keys", "on", ";"])
+        args.extend([
+            "new-session", "-d", "-s", self.session,
+            "-c", root, "-x", str(cols), "-y", str(rows),
+        ])
+        self._run(args)
 
     def apply_session_options(
         self,
@@ -950,6 +985,26 @@ class TmuxBackend:
         对已存在会话在启动时补一次（``create_session`` 里已带）。
         """
         self._run(["set", "-g", "set-clipboard", "on"], check=False)
+
+    def enable_extended_keys(self) -> None:
+        """允许 pane 内程序请求带修饰键的键（Shift+Enter / Ctrl-J）。
+
+        为什么必须显式开：tmux 默认 ``extended-keys off``，pane 里的 TUI
+        即使发 ``CSI > 4 ; 2 m`` 请求 modifyOtherKeys mode 2，tmux 仍按老式
+        字节发送——Shift+Enter 与 Enter 都是 ``\\r``，Ctrl-J 就是裸 ``\\n``
+        （readline 会把它当 accept-line）。于是 iTerm2 里 Shift+Enter 变成
+        「提交」、Ctrl-J 与回车无异，看起来就是「没反应」。
+
+        ``on`` 只在程序主动请求 mode 1/2 时才启用扩展编码，未请求的程序
+        行为完全不变；tmux < 3.5 没有正确的 mode 2 实现，直接跳过。
+        ``create_session`` 已带这条，这里补已存在的会话（启动时调用）。
+        """
+        if not self.supports_extended_keys():
+            log.debug("tmux 版本过低（%s），跳过 extended-keys", self.tmux_version())
+            return
+        proc = self._run(["set", "-g", "extended-keys", "on"], check=False)
+        if proc.returncode != 0:
+            log.debug("extended-keys 下发失败：%s", proc.stderr.strip())
 
     def show_buffer(self) -> str | None:
         """最新 tmux paste buffer 的文本；无 buffer / 非文本 → ``None``。

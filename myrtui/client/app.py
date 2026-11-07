@@ -9,8 +9,10 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
+import re
 import sys
 import time
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
@@ -92,6 +94,103 @@ def _mouse_debug(msg: str) -> None:
             f.write(f"{time.time():.3f} {msg}\n")
     except OSError:
         pass  # 日志写不进去绝不影响主流程
+
+
+# ── 键盘诊断日志（0.12.x） ───────────────────────────────────────────
+# ``MYRTUI_KEY_DEBUG=1`` 启动时，把 App 收到的每个键（Textual 键名 + 关联
+# 文本 + 当前屏幕/焦点）写进临时文件。用来分辨「终端根本没发这个键」
+# 与「发了但键名不是预期的」（iTerm2 的 Ctrl-J / Shift+Enter 排障）。
+# 默认关闭；未开启时只多一个 bool 判断。
+_KEY_DEBUG = _os.environ.get("MYRTUI_KEY_DEBUG") == "1"
+_KEY_DEBUG_PATH = (
+    _os.path.join(
+        _tempfile.gettempdir(), f"myrtui-key-debug-{_os.getpid()}.log"
+    )
+    if _KEY_DEBUG
+    else None
+)
+
+
+def _key_debug(msg: str) -> None:
+    """追加一条键盘诊断日志（仅 ``MYRTUI_KEY_DEBUG=1`` 时生效）。"""
+    if not _KEY_DEBUG:
+        return
+    try:
+        with open(_KEY_DEBUG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"{time.time():.3f} {msg}\n")
+    except OSError:
+        pass  # 日志写不进去绝不影响主流程
+
+
+# ── Kitty 键盘协议旗标覆盖（iTerm2 3.7.x 兼容开关） ─────────────────
+# Textual 启动时固定请求 ``CSI > 25 u``（disambiguate | report-all |
+# associated-text）。iTerm2 3.7.7 在 report-all 模式下会把 Ctrl+字母交给
+# Cocoa 文本输入，导致 **Control 修饰符丢失**：Ctrl-J 到 myrtui 变成裸
+# ``j``（key debug 里是 ``left_control`` + ``j``），Ctrl+C 同理。
+# 其他终端不受影响（Terminal.app / Tabby 不实现 Kitty，走传统字节）。
+#
+# 兼容做法：在 iTerm2 里只请求 **flags=1（disambiguate）**。它保留了
+# Shift+Enter 需要的 ``CSI 13;2u``，又不触发 iTerm2 的 report-all/Cocoa 路径。
+# **不能照抄 opencode 的 flags=5**：5 含 alternate-keys（4），iTerm2 会发
+# ``CSI 97:65;2u`` 这种带冒号的码点，Textual 8.2.8 解析时直接 ValueError。
+# 显式 ``MYRTUI_KITTY_FLAGS`` 仍可覆盖（排障用，``25`` 恢复 Textual 默认）。
+KITTY_FLAGS_ENV = "MYRTUI_KITTY_FLAGS"
+ITERM2_KITTY_FLAGS = 1
+_KITTY_ENABLE_RE = re.compile(r"^\x1b\[>(\d+)u$")
+
+
+def resolve_kitty_flags(raw: str | None) -> int | None:
+    """解析 ``MYRTUI_KITTY_FLAGS`` → 0..31；未设/非法返回 ``None``。"""
+    if raw is None or not raw.strip():
+        return None
+    try:
+        value = int(raw.strip(), 0)
+    except ValueError:
+        return None
+    return value if 0 <= value <= 31 else None
+
+
+def default_kitty_flags(
+    env: Mapping[str, str] | None = None,
+) -> int | None:
+    """没有显式覆盖时按终端选旗标：iTerm2 → 1，其余 → Textual 默认。
+
+    ``LC_TERMINAL`` 在 ssh 会话里通常也会保留，所以两条判据都认
+    （与 Textual 自己的 ``IS_ITERM`` 同口径）。
+    """
+    source = _os.environ if env is None else env
+    if (
+        source.get("LC_TERMINAL") == "iTerm2"
+        or source.get("TERM_PROGRAM") == "iTerm.app"
+    ):
+        return ITERM2_KITTY_FLAGS
+    return None
+
+
+def _rewrite_kitty_flags(data: str, flags: int) -> str:
+    """把驱动写出的 ``CSI > N u`` 换成指定旗标（其余输出原样返回）。"""
+    match = _KITTY_ENABLE_RE.match(data)
+    if match is None:
+        return data
+    return f"\x1b[>{flags}u"
+
+
+def apply_kitty_flags_override(flags: int | None) -> None:
+    """在 ``app.run()`` 前覆盖 Textual 的 Kitty 旗标（仅排障/兼容用）。"""
+    if flags is None:
+        return
+    from textual.drivers import linux_driver
+
+    driver = linux_driver.LinuxDriver
+    if getattr(driver, "_myrtui_flags_patched", False):
+        return
+    original_write = driver.write
+
+    def write(self, data: str) -> None:
+        original_write(self, _rewrite_kitty_flags(data, flags))
+
+    driver.write = write
+    driver._myrtui_flags_patched = True
 
 
 # 轮询参数（§8）
@@ -327,10 +426,25 @@ def map_key(key: str, character: str | None = None) -> tuple[str, str] | None:
     - 修饰键组合一律**前缀解析**：``alt+backspace`` → ``M-BSpace``、
       ``ctrl+left`` → ``C-Left``、``ctrl+shift+a`` → ``C-S-a``。
       旧实现只认长度 5/6，把 ``alt+up``（6 字符）等静默丢弃（P0 验收报告 §3-4）；
+    - 扩展序列会用**关联文本**当键名（``shift+\\r``、``ctrl+\\n``）：
+      先把控制字符基键还原成 ``enter`` / ``j``，否则会拼出 tmux 不认的
+      ``S-\\r`` / ``C-\\n``（iTerm2 里 Shift+Enter / Ctrl-J「没反应」）；
     - 裸 ``space`` 走文本路径（与历史行为一致，测试锚定）。
     """
     if key == "space":
         return "text", " "
+    # xterm modifyOtherKeys / Kitty 关联文本会把控制字符直接放进键名：
+    # CSI 27;2;13~ → "shift+\r"、CSI 27;5;13~ → "ctrl+\r"、
+    # CSI 106;5;10u → "ctrl+\n"（Ctrl-J 的关联文本就是 LF）。不还原的话
+    # 这里会拼出非法的 "S-\r" / "C-\n"，tmux 直接丢弃 → 按键「没反应」。
+    if key in ("\r", "\n"):
+        return "keys", "Enter"  # 裸 CR/LF 都是回车（老式编码）
+    if "+" in key:
+        head, _, base = key.rpartition("+")
+        if base == "\r":
+            key = f"{head}+enter"
+        elif base == "\n":
+            key = f"{head}+j"
     if key in _SPECIAL_KEYS:
         return "keys", _SPECIAL_KEYS[key]
     if len(key) == 1:
@@ -3367,6 +3481,16 @@ class TerminalApp(App, inherit_bindings=False):
         侧栏聚焦时 ``Esc`` 回终端、``Ctrl-a`` 前缀状态、dead pane 拦截、
         手势取消全部与物理按键一致。
         """
+        if _KEY_DEBUG:
+            try:
+                _key_debug(
+                    f"key={key!r} char={character!r} "
+                    f"screen={type(self.screen).__name__} "
+                    f"sidebar={self._sidebar_focused()} "
+                    f"pane={self._active_pane}"
+                )
+            except Exception:  # noqa: BLE001 —— 诊断绝不能影响键路由
+                log.debug("键盘诊断日志失败", exc_info=True)
         if not isinstance(self.screen, MainScreen):
             return
         # v0.35：高亮 / hold / 手势期间按键 → 先取消并解冻，然后正常处理。
