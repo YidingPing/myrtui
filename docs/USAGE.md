@@ -82,6 +82,10 @@ myrtui stop [target]   # ask the front end to leave, then kill the session
 - Attaching to a **running** instance triggers the takeover handshake: the
   other front end exits, the shells survive. This is not shared attachment.
   Attaching to a **detached** instance restores the previous layout ratios.
+- The front end that yields (or is stopped) leaves one line on stderr before
+  returning to the shell (`another front end took over …` /
+  `this instance was stopped …`), so a silent exit is not mistaken for a
+  crash. The exit code stays 0, and `Ctrl-a d` stays silent.
 - `stop` writes a cooperative stop marker; if the front end does not respond
   within 3 s it reports an error and **does not force-kill**. After acquiring
   the lock it re-checks that the target has not been taken over meanwhile.

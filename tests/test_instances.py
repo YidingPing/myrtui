@@ -684,7 +684,7 @@ def test_app_sentry_exits_on_stop_marker(tmp_path):
     backend.create_session(proj, 80, 24)
     sp = str(tmp_path / "s.stop")
 
-    from myrtui.client.app import TerminalApp
+    from myrtui.client.app import EXIT_STOP, TerminalApp
 
     async def scenario():
         app = TerminalApp(backend, proj, stop_path=sp)
@@ -698,6 +698,7 @@ def test_app_sentry_exits_on_stop_marker(tmp_path):
                 if app._exit:
                     break
             assert app._exit, "哨戒应在 2s 内看到有效 stop 标记并退场"
+            assert app.return_value == EXIT_STOP
     asyncio.run(scenario())
     assert backend.has_session(), "stop 标记本身不得杀会话（由 stop 侧 kill）"
     backend.kill_server()

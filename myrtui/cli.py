@@ -12,6 +12,8 @@
 5. 无会话则按 M13 序列创建（先 set -g 后 new-session，单次调用，含 P2 的
    shell / history-limit）；会话已存在则把显式参数下发给**之后新建**的 pane；
 6. 进入 Textual UI（持锁期间运行 §6 哨戒：读接管标记、两级校验通过才让位）。
+   让位 / stop 都是干净退出，退出前由 ``_report_exit`` 在 shell 上方补一行
+   提示（0.12.3）——否则用户那边看起来就是「凭空回到提示符」。
 
 实例管理子命令（DISTRIBUTION-INSTANCES-PLAN §3）：``argv[1] ∈ {ls, list,
 attach, stop}`` 时预分发到 ``myrtui.instances``，本模块只负责裸启动路径。
@@ -468,6 +470,55 @@ def _take_lang(argv: list[str]) -> list[str]:
     return rest
 
 
+def _report_exit(reason: str | None) -> None:
+    """退出原因 → shell 上方一行提示（0.12.3）。
+
+    让位与 stop 都是干净退出（退出码 0），但用户那个终端里今天只会「凭空回到
+    提示符」，像崩溃：哨戒的 log.info 在 WARNING 级别下根本不会落盘。Textual
+    退出时已还原屏幕，这一行落在 shell 提示符上方（与 tmux 的
+    ``[detached (from session …)]`` 同位置）。其余退出（``Ctrl-a d``、q、kill、
+    异常）保持静默，避免改掉有肌肉记忆的键。
+    """
+    if reason is None:
+        return
+    # 常量与 App 同源；延迟 import 以免 --version / ls 也拉起 Textual。
+    from myrtui.client.app import EXIT_STOP, EXIT_TAKEOVER
+
+    if reason == EXIT_TAKEOVER:
+        print(t("cli.notice_takeover"), file=sys.stderr)
+    elif reason == EXIT_STOP:
+        print(t("cli.notice_stopped"), file=sys.stderr)
+
+
+def _run_frontend(app: "TerminalApp", backend: TmuxBackend, lock_fd: int) -> None:
+    """前台生命周期：跑 App、收尾、按退出原因补一行提示（0.12.3）。
+
+    从 ``main()`` 抽出来，让「``App.run()`` 的返回值真的送到 stderr」可以
+    不起 tmux / Textual 地测（``tests/test_p1.py`` 的 report 用例）。
+    """
+    # TUI 即将接管终端：日志改落盘，避免 warning 画到光标处（见函数文档）
+    redirect_logging_to_file()
+    # 退出原因（让位 / stop / 用户退出 / None）。Textual 的 run() 返回
+    # App.exit(result=…) 的值；终端已还原，收尾后再补那一行提示。
+    reason: str | None = None
+    try:
+        reason = app.run()
+    finally:
+        # 先关常驻客户端（计划 §2.3：退出时不让它活过前端），再放锁。
+        # 前端退出（含接管让位）= detach；tmux 会话与 shell 继续存活（§3.1）。
+        backend.close_control()
+        if os.environ.get("MYRTUI_LOOP_DEBUG") == "1":
+            # 与事件循环遥测同口径：直写 stderr，验收时不用配 logging
+            print(
+                f"[myrtui] transport control reconnects={backend.reconnects}",
+                file=sys.stderr,
+                flush=True,
+            )
+        # 锁文件不删除（永不 unlink），fd 随进程退出由内核释放。
+        os.close(lock_fd)
+    _report_exit(reason)
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.WARNING)
     argv = sys.argv[1:] if argv is None else list(argv)
@@ -602,23 +653,8 @@ def main(argv: list[str] | None = None) -> int:
     apply_kitty_flags_override(
         kitty_flags if kitty_flags is not None else default_kitty_flags()
     )
-    # TUI 即将接管终端：日志改落盘，避免 warning 画到光标处（见函数文档）
-    redirect_logging_to_file()
-    try:
-        app.run()
-    finally:
-        # 先关常驻客户端（计划 §2.3：退出时不让它活过前端），再放锁。
-        # 前端退出（含接管让位）= detach；tmux 会话与 shell 继续存活（§3.1）。
-        backend.close_control()
-        if os.environ.get("MYRTUI_LOOP_DEBUG") == "1":
-            # 与事件循环遥测同口径：直写 stderr，验收时不用配 logging
-            print(
-                f"[myrtui] transport control reconnects={backend.reconnects}",
-                file=sys.stderr,
-                flush=True,
-            )
-        # 锁文件不删除（永不 unlink），fd 随进程退出由内核释放。
-        os.close(lock_fd)
+    # 前台生命周期：日志落盘、App 退出后的收尾与提示都在里面
+    _run_frontend(app, backend, lock_fd)
     return 0
 
 

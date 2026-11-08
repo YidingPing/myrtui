@@ -93,6 +93,8 @@ MESSAGES: dict[str, str] = {
     "cli.err_scrollback": "myrtui: --scrollback must be within 1..{max} (got {value})",
     "cli.err_busy": "myrtui: another myrtui instance is already running for this directory ({root}) and did not yield within {timeout:.0f}s; end the old instance and retry.",
     "cli.lock_timeout": "timed out after {timeout:.0f}s waiting for the running instance to yield",
+    "cli.notice_takeover": "myrtui: another front end took over this instance; the tmux session and its shells are still running.",
+    "cli.notice_stopped": "myrtui: this instance was stopped; its tmux session has ended.",
 
     # ---- graphics capability probing (graphics.py) -------------------------
     "gfx.mode_invalid": "{env}={raw!r} is invalid; falling back to auto",

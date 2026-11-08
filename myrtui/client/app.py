@@ -388,6 +388,14 @@ COMPACT_EXIT_WIDTH = 64
 COMPACT_ENTER_HEIGHT = 16
 COMPACT_EXIT_HEIGHT = 18
 
+# ── 0.12.3：让位 / stop 的退出原因 ──
+# 改动前哨戒只有 log.info + exit()；而日志级别是 WARNING，用户那边看到的
+# 就是「凭空回到 shell」，像崩溃。App.exit(result=…) 会把值从 App.run()
+# 返回，cli 据此在终端还原后补一行提示。退出码仍为 0——让位是设计（不是
+# 错误），所以原因走 result 而不是 return_code。
+EXIT_TAKEOVER = "takeover"
+EXIT_STOP = "stop"
+
 
 def resolve_compact_mode(raw: str | None) -> str:
     """解析 ``MYRTUI_COMPACT`` → ``"auto"`` / ``"on"`` / ``"off"``。
@@ -2345,7 +2353,8 @@ class TerminalApp(App, inherit_bindings=False):
         for pid, ts in read_takeover_markers(self._takeover_path or ""):
             if is_marker_valid(pid, ts):
                 log.info("收到接管请求（pid=%s），让位退出", pid)
-                self.exit()  # 让位 = 干净退出；shell 无损（§6）
+                # 让位 = 干净退出；shell 无损（§6）。result 供 cli 补一行提示。
+                self.exit(result=EXIT_TAKEOVER)
                 return
         # 实例管理：stop 标记单独一个文件、单独前缀（评审 R6——不复用
         # takeover 文件，避免让位与停止互相干扰）；有效 = 整个退场
@@ -2354,7 +2363,8 @@ class TerminalApp(App, inherit_bindings=False):
         ):
             if is_marker_valid(pid, ts):
                 log.info("收到 stop 请求（pid=%s），退场", pid)
-                self.exit()  # 停止 = 干净退出；之后由 stop 侧 kill 会话
+                # 停止 = 干净退出；之后由 stop 侧 kill 会话
+                self.exit(result=EXIT_STOP)
                 return
 
     # ---------- 自适应轮询 ----------

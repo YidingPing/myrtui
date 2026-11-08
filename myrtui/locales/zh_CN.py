@@ -90,6 +90,8 @@ MESSAGES: dict[str, str] = {
     "cli.err_scrollback": "myrtui: --scrollback 必须在 1..{max}（收到 {value}）",
     "cli.err_busy": "myrtui: 该目录已有 myrtui 实例在运行（{root}），且 {timeout:.0f}s 内未让位；请手动结束旧实例后重试。",
     "cli.lock_timeout": "等锁超过 {timeout:.0f}s 未获让位",
+    "cli.notice_takeover": "myrtui: 另一个前端接管了本实例；tmux 会话与 shell 仍在运行。",
+    "cli.notice_stopped": "myrtui: 本实例已被停止；tmux 会话已结束。",
 
     # ---- 位图能力探测（graphics.py）----------------------------------------
     "gfx.mode_invalid": "{env}={raw!r} 非法，已回落 auto",

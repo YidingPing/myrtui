@@ -19,7 +19,13 @@ from textual.widgets import Label
 from myrtui import cli
 from myrtui.gitstat import GitInfo, git_status, parse_git_status
 from myrtui.tmux_backend import TmuxBackend
-from myrtui.client.app import ConfirmDialog, MAX_PANES, TerminalApp
+from myrtui.client.app import (
+    EXIT_STOP,
+    EXIT_TAKEOVER,
+    ConfirmDialog,
+    MAX_PANES,
+    TerminalApp,
+)
 from myrtui.client.pane_widget import PaneWidget
 from myrtui.client.topbar import BRAND_TEXT, TopBar, TopBarButton, PaneTab
 from myrtui.i18n import t
@@ -883,6 +889,8 @@ def test_sentry_yields_on_valid_marker(backend, tmp_path, app_root):
                 if app._exit:
                     break
             assert app._exit, "哨戒应在 2s 内看到有效标记并让位"
+            # 0.12.3：退出原因必须从 run() 带出来，cli 才有东西可提示
+            assert app.return_value == EXIT_TAKEOVER
     asyncio.run(scenario())
     # 让位 = 前端退出；会话必须还活着（shell 无损）
     assert backend.has_session(), "让位不得影响 tmux 会话"
@@ -908,6 +916,7 @@ def test_sentry_ignores_stale_marker(backend, tmp_path, app_root):
                 if app._exit:
                     break
             assert app._exit
+            assert app.return_value == EXIT_TAKEOVER
     asyncio.run(scenario())
     assert backend.has_session()
 
@@ -920,6 +929,51 @@ def test_sentry_no_takeover_path_no_sentry(backend, app_root):
             await pilot.pause(1.2)
             assert not app._exit
     asyncio.run(scenario())
+
+
+# ---------- 退出原因 → shell 上方一行提示（0.12.3） ----------
+
+def test_report_exit_prints_only_known_reasons(capsys):
+    """只有让位 / stop 两种原因打印；其余（Ctrl-a d、q、kill）保持静默。"""
+    cli._report_exit(None)
+    assert capsys.readouterr().err == ""
+    cli._report_exit(EXIT_TAKEOVER)
+    assert capsys.readouterr().err.strip() == t("cli.notice_takeover")
+    cli._report_exit(EXIT_STOP)
+    assert capsys.readouterr().err.strip() == t("cli.notice_stopped")
+    cli._report_exit("detached")
+    assert capsys.readouterr().err == ""
+
+
+def test_run_frontend_reports_takeover_and_releases_lock(
+    tmp_path, monkeypatch, capsys
+):
+    """回归：App.run() 的返回值必须真的走到 stderr（不是只存在常量里）。"""
+
+    class FakeApp:
+        def run(self):
+            return EXIT_TAKEOVER
+
+    class FakeBackend:
+        reconnects = 0
+
+        def __init__(self):
+            self.closed = False
+
+        def close_control(self):
+            self.closed = True
+
+    monkeypatch.setattr(cli, "redirect_logging_to_file", lambda: None)
+    monkeypatch.delenv("MYRTUI_LOOP_DEBUG", raising=False)
+    lock = tmp_path / "f.lock"
+    fd = os.open(str(lock), os.O_CREAT | os.O_RDWR)
+    backend = FakeBackend()
+    cli._run_frontend(FakeApp(), backend, fd)
+    assert backend.closed, "收尾必须先关常驻 control 客户端"
+    assert capsys.readouterr().err.strip() == t("cli.notice_takeover")
+    # fd 已被关闭（再 close 会 EBADF）
+    with pytest.raises(OSError):
+        os.close(fd)
 
 
 # ---------- 进程级接管端到端（两进程真实 flock 交接） ----------
