@@ -399,11 +399,9 @@ def test_app_respawn_most_recent_by_default(backend, app_root):
                 await pilot.pause(0.1)
             assert len(app._pane_ids) == 3
             ids = list(app._pane_ids)
-            backend.send_text(ids[0], "exit"); backend.send_keys(ids[0], "Enter")
-            _wait_dead(backend, ids[0])
+            _exit_pane(backend, ids[0])
             await pilot.pause(0.6)  # 让前端先观测到第 1 次死亡
-            backend.send_text(ids[1], "exit"); backend.send_keys(ids[1], "Enter")
-            _wait_dead(backend, ids[1])
+            _exit_pane(backend, ids[1])
             await pilot.pause(0.6)
             assert app._dead_order == [ids[0], ids[1]]
             assert app._active_index == 2  # 焦点在存活的第 3 个 pane
@@ -426,11 +424,9 @@ def test_app_respawn_prefers_focused_dead_pane(backend, app_root):
             await pilot.press("ctrl+a"); await pilot.press("t")
             await pilot.pause(0.8)
             ids = list(app._pane_ids)
-            backend.send_text(ids[0], "exit"); backend.send_keys(ids[0], "Enter")
-            _wait_dead(backend, ids[0])
+            _exit_pane(backend, ids[0])
             await pilot.pause(0.6)
-            backend.send_text(ids[1], "exit"); backend.send_keys(ids[1], "Enter")
-            _wait_dead(backend, ids[1])
+            _exit_pane(backend, ids[1])
             await pilot.pause(0.6)
             assert app._dead_order == [ids[0], ids[1]]
             await pilot.press("ctrl+a"); await pilot.press("1")  # 焦点回到已死的 pane 0
